@@ -7,6 +7,8 @@ export interface PollResult {
   message?: string;
 }
 
+const MAX_FEED_BYTES = 5 * 1024 * 1024;
+
 export async function pollFeed(
   entry: FeedEntry,
   store: FeedStore,
@@ -49,13 +51,16 @@ export async function pollFeed(
   if (res.status === 304 && existing) {
     await store.putFeed(entry.id, {
       ...existing,
-      meta: { ...existing.meta, last_fetched: new Date().toISOString(), error_count: 0 },
+      meta: { ...existing.meta, last_fetched: new Date().toISOString(), error_count: 0, last_error: undefined },
     });
     return { id: entry.id, status: "not-modified" };
   }
   if (!res.ok) return fail(`origin returned HTTP ${res.status}`);
 
+  const len = Number(res.headers.get("content-length") ?? 0);
+  if (len > MAX_FEED_BYTES) return fail(`origin body too large (${len} bytes)`);
   const body = await res.text();
+  if (body.length > MAX_FEED_BYTES) return fail("origin body too large");
   try {
     const doc = parseFeed(body);
     const stored: StoredFeed = {
@@ -85,7 +90,13 @@ export async function pollAll(
   const results: PollResult[] = [];
   const BATCH = 5;
   for (let i = 0; i < feeds.length; i += BATCH) {
-    const batch = await Promise.all(feeds.slice(i, i + BATCH).map((f) => pollFeed(f, store, fetchFn)));
+    const batch = await Promise.all(
+      feeds.slice(i, i + BATCH).map((f) =>
+        pollFeed(f, store, fetchFn).catch((e): PollResult => ({
+          id: f.id, status: "error", message: (e as Error).message,
+        })),
+      ),
+    );
     results.push(...batch);
   }
   return results;
