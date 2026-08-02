@@ -9,10 +9,11 @@ function esc(s: string): string {
 }
 
 export function renderFeedPage(doc: FeedDoc, feedUrl: string, stale: string | null): string {
+  const safeHref = (u: string) => (/^https?:\/\//i.test(u) ? esc(u) : "#");
   const items = doc.items
     .slice(0, 25)
     .map(
-      (i) => `<li><a href="${esc(i.link)}">${esc(i.title)}</a>${
+      (i) => `<li><a href="${safeHref(i.link)}">${esc(i.title)}</a>${
         i.pubDate ? ` <time>${esc(i.pubDate)}</time>` : ""
       }</li>`,
     )

@@ -22,6 +22,16 @@ describe("renderFeedPage", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
+  it("blocks javascript: URLs in item links", () => {
+    const evil = {
+      ...doc,
+      items: [{ title: "click", link: "javascript:alert(1)", guid: "g" }],
+    };
+    const html = renderFeedPage(evil, "https://feeds.example.com/blog", null);
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain('href="#"');
+  });
+
   it("shows a staleness warning", () => {
     const html = renderFeedPage(doc, "https://feeds.example.com/blog", "origin returned HTTP 502");
     expect(html).toContain("502");
