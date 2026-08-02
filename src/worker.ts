@@ -4,10 +4,14 @@ import { resolveFeedId } from "./router";
 import { parseFeed, buildAtom } from "./normalize";
 import { classifyUa, recordRequest } from "./analytics";
 import { renderFeedPage } from "./view";
+import { handleApi } from "./api";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/")) {
+      return handleApi(request, env, url);
+    }
     const store = new KVFeedStore(env.FEEDS);
     const feedId = await resolveFeedId(url, store);
     if (!feedId) return new Response("Not found", { status: 404 });
