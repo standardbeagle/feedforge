@@ -15,6 +15,8 @@ export default {
     }
     const store = new KVFeedStore(env.FEEDS);
     const feedId = await resolveFeedId(url, store);
+    const entry = feedId ? (await store.getRegistry()).feeds.find((f) => f.id === feedId) : undefined;
+    const maxAge = entry ? entry.poll_minutes * 60 : 60;
 
     let doc: FeedDoc;
     let storedXml: string | null = null;
@@ -26,8 +28,6 @@ export default {
       storedXml = stored.xml;
       stale = stored.meta.error_count > 0 ? (stored.meta.last_error ?? "stale") : null;
     } else {
-      const reg = feedId ? await store.getRegistry() : null;
-      const entry = feedId ? reg!.feeds.find((f) => f.id === feedId) : undefined;
       if (feedId && entry) {
         const result = await pollFeed(entry, store);
         if (result.status === "error") {
@@ -64,11 +64,12 @@ export default {
     ctx.waitUntil(recordRequest(env, recordId, request));
 
     const staleHeader: Record<string, string> = stale ? { "x-feed-stale": "true" } : {};
+    const cacheHeader = { "cache-control": `public, max-age=${maxAge}` };
     const ua = request.headers.get("user-agent") ?? "";
 
     if (url.searchParams.get("format") === "atom") {
       return new Response(buildAtom(doc), {
-        headers: { "content-type": "application/atom+xml; charset=utf-8", ...staleHeader },
+        headers: { "content-type": "application/atom+xml; charset=utf-8", ...cacheHeader, ...staleHeader },
       });
     }
 
@@ -83,7 +84,7 @@ export default {
     }
 
     return new Response(storedXml ?? buildRss(doc), {
-      headers: { "content-type": "application/rss+xml; charset=utf-8", ...staleHeader },
+      headers: { "content-type": "application/rss+xml; charset=utf-8", ...cacheHeader, ...staleHeader },
     });
   },
 

@@ -47,6 +47,14 @@ describe("channel feed serving", () => {
     expect(await res.text()).toContain("v42 deployed");
   });
 
+  it("sets a short Cache-Control on channel feeds", async () => {
+    const ch = await mkChannelWithItem();
+    const res = await SELF.fetch(`https://feeds.example.com/${ch.id}`, {
+      headers: { "user-agent": "Miniflux/2.0" },
+    });
+    expect(res.headers.get("cache-control")).toBe("public, max-age=60");
+  });
+
   it("404s after channel deletion", async () => {
     const ch = await mkChannelWithItem();
     await SELF.fetch(`https://feeds.example.com/api/channels/${ch.id}`, {

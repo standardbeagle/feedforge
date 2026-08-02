@@ -73,6 +73,13 @@ describe("fetch handler", () => {
     expect(res.headers.get("content-type")).toContain("application/atom+xml");
   });
 
+  it("sets Cache-Control from the feed poll interval", async () => {
+    const res = await SELF.fetch("https://feeds.example.com/blog", {
+      headers: { "user-agent": "FreshRSS/1.24" },
+    });
+    expect(res.headers.get("cache-control")).toBe("public, max-age=1800");
+  });
+
   it("sets X-Feed-Stale when origin errors have accumulated", async () => {
     const store = new KVFeedStore(env.FEEDS);
     await store.putFeed("blog", {
