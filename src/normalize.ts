@@ -68,6 +68,18 @@ function atomLink(v: unknown): string {
   return "";
 }
 
+function atomEnclosure(v: unknown): Enclosure | undefined {
+  for (const l of asArray(v as object | object[])) {
+    const o = l as Record<string, unknown>;
+    if (o["@_rel"] === "enclosure") {
+      const url = attr(o, "href");
+      if (!url) return undefined;
+      return compact({ url, length: intOr(attr(o, "length")), type: attr(o, "type") });
+    }
+  }
+  return undefined;
+}
+
 function str(v: unknown): string | undefined {
   return text(v) || undefined;
 }
@@ -310,6 +322,7 @@ export function parseFeed(raw: string): FeedDoc {
           guid: text(e.id) || link,
           pubDate: text(e.published ?? e.updated) || undefined,
           description: text(e.summary ?? e.content) || undefined,
+          enclosure: atomEnclosure(e.link),
         };
       }),
     };
@@ -326,23 +339,149 @@ const builder = new XMLBuilder({
 
 const XML_DECL = `<?xml version="1.0" encoding="UTF-8"?>\n`;
 
+function entry(o: Record<string, unknown>, key: string, value: unknown): void {
+  if (value !== undefined) o[key] = value;
+}
+
+function itunesChannelXml(t: ItunesChannel): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  entry(o, "itunes:author", t.author);
+  if (t.image !== undefined) o["itunes:image"] = { "@_href": t.image };
+  entry(o, "itunes:summary", t.summary);
+  if (t.ownerName !== undefined || t.ownerEmail !== undefined) {
+    const owner: Record<string, unknown> = {};
+    entry(owner, "itunes:name", t.ownerName);
+    entry(owner, "itunes:email", t.ownerEmail);
+    o["itunes:owner"] = owner;
+  }
+  entry(o, "itunes:explicit", t.explicit);
+  entry(o, "itunes:type", t.type);
+  if (t.categories?.length) {
+    o["itunes:category"] = t.categories.map((c) => ({ "@_text": c }));
+  }
+  return o;
+}
+
+function itunesItemXml(t: ItunesItem): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  entry(o, "itunes:duration", t.duration);
+  if (t.image !== undefined) o["itunes:image"] = { "@_href": t.image };
+  entry(o, "itunes:explicit", t.explicit);
+  entry(o, "itunes:episode", t.episode);
+  entry(o, "itunes:season", t.season);
+  entry(o, "itunes:episodeType", t.episodeType);
+  return o;
+}
+
+function personXml(p: PodcastPerson): Record<string, unknown> {
+  const o: Record<string, unknown> = { "#text": p.name };
+  entry(o, "@_role", p.role);
+  entry(o, "@_group", p.group);
+  entry(o, "@_img", p.img);
+  entry(o, "@_href", p.href);
+  return o;
+}
+
+function podcastChannelXml(p: PodcastChannelMeta): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  entry(o, "podcast:guid", p.guid);
+  if (p.locked !== undefined) {
+    const locked: Record<string, unknown> = { "#text": p.locked };
+    entry(locked, "@_owner", p.lockedOwner);
+    o["podcast:locked"] = locked;
+  }
+  entry(o, "podcast:medium", p.medium);
+  if (p.persons?.length) o["podcast:person"] = p.persons.map(personXml);
+  if (p.funding?.length) {
+    o["podcast:funding"] = p.funding.map((f) => {
+      const x: Record<string, unknown> = { "@_url": f.url };
+      entry(x, "#text", f.message);
+      return x;
+    });
+  }
+  if (p.location !== undefined) {
+    const loc: Record<string, unknown> = { "#text": p.location.name };
+    entry(loc, "@_geo", p.location.geo);
+    entry(loc, "@_osm", p.location.osm);
+    o["podcast:location"] = loc;
+  }
+  if (p.value !== undefined) {
+    const value: Record<string, unknown> = {
+      "@_type": p.value.type,
+      "@_method": p.value.method,
+    };
+    entry(value, "@_suggested", p.value.suggested);
+    value["podcast:valueRecipient"] = p.value.recipients.map((r) => {
+      const x: Record<string, unknown> = {
+        "@_address": r.address,
+        "@_type": r.type,
+        "@_split": r.split,
+      };
+      entry(x, "@_name", r.name);
+      entry(x, "@_fee", r.fee ? "true" : undefined);
+      return x;
+    });
+    o["podcast:value"] = value;
+  }
+  return o;
+}
+
+function podcastItemXml(p: PodcastItemMeta): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  if (p.chaptersUrl !== undefined) o["podcast:chapters"] = { "@_url": p.chaptersUrl };
+  if (p.transcripts?.length) {
+    o["podcast:transcript"] = p.transcripts.map((t) => {
+      const x: Record<string, unknown> = { "@_url": t.url, "@_type": t.type };
+      entry(x, "@_language", t.language);
+      entry(x, "@_rel", t.rel);
+      return x;
+    });
+  }
+  if (p.persons?.length) o["podcast:person"] = p.persons.map(personXml);
+  entry(o, "podcast:episode", p.episode);
+  entry(o, "podcast:season", p.season);
+  return o;
+}
+
 export function buildRss(doc: FeedDoc): string {
+  const useItunes = doc.itunes !== undefined || doc.items.some((i) => i.itunes !== undefined);
+  const usePodcast = doc.podcast !== undefined || doc.items.some((i) => i.podcast !== undefined);
+  const useContent = doc.items.some((i) => i.content_encoded !== undefined);
   const channel: Record<string, unknown> = {
     title: doc.title,
     link: doc.link,
     description: doc.description,
+    ...(doc.itunes ? itunesChannelXml(doc.itunes) : {}),
+    ...(doc.podcast ? podcastChannelXml(doc.podcast) : {}),
     item: doc.items.map((i) => {
-      const item: Record<string, string> = {
+      const item: Record<string, unknown> = {
         title: i.title,
         link: i.link,
         guid: i.guid,
       };
-      if (i.pubDate) item.pubDate = i.pubDate;
-      if (i.description) item.description = i.description;
+      entry(item, "pubDate", i.pubDate);
+      entry(item, "description", i.description);
+      if (i.enclosure) {
+        const enc: Record<string, unknown> = { "@_url": i.enclosure.url };
+        entry(enc, "@_length", i.enclosure.length);
+        entry(enc, "@_type", i.enclosure.type);
+        item.enclosure = enc;
+      }
+      entry(item, "content:encoded", i.content_encoded);
+      Object.assign(
+        item,
+        i.itunes ? itunesItemXml(i.itunes) : {},
+        i.podcast ? podcastItemXml(i.podcast) : {},
+      );
       return item;
     }),
   };
-  return XML_DECL + builder.build({ rss: { "@_version": "2.0", channel } });
+  const rss: Record<string, unknown> = { "@_version": "2.0" };
+  if (useItunes) rss["@_xmlns:itunes"] = "http://www.itunes.com/dtds/podcast-1.0.dtd";
+  if (usePodcast) rss["@_xmlns:podcast"] = "https://podcastindex.org/namespace/1.0";
+  if (useContent) rss["@_xmlns:content"] = "http://purl.org/rss/1.0/modules/content/";
+  rss.channel = channel;
+  return XML_DECL + builder.build({ rss });
 }
 
 export function rfc3339(date: string): string {
@@ -360,13 +499,25 @@ export function buildAtom(doc: FeedDoc): string {
       link: { "@_href": doc.link },
       id: doc.link,
       updated,
-      entry: doc.items.map((i) => ({
-        title: i.title,
-        link: { "@_href": i.link },
-        id: i.guid,
-        updated: i.pubDate ? rfc3339(i.pubDate) : updated,
-        summary: i.description ?? "",
-      })),
+      entry: doc.items.map((i) => {
+        const links: Record<string, unknown>[] = [{ "@_href": i.link }];
+        if (i.enclosure) {
+          const enc: Record<string, unknown> = {
+            "@_rel": "enclosure",
+            "@_href": i.enclosure.url,
+          };
+          entry(enc, "@_type", i.enclosure.type);
+          entry(enc, "@_length", i.enclosure.length);
+          links.push(enc);
+        }
+        return {
+          title: i.title,
+          link: links,
+          id: i.guid,
+          updated: i.pubDate ? rfc3339(i.pubDate) : updated,
+          summary: i.description ?? "",
+        };
+      }),
     },
   });
 }

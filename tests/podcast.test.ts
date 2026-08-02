@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import podcastXml from "./fixtures/podcast.xml?raw";
-import { parseFeed } from "../src/normalize";
+import { parseFeed, buildRss, buildAtom } from "../src/normalize";
 
 const doc = parseFeed(podcastXml);
 
@@ -77,5 +77,42 @@ describe("podcast parsing", () => {
     expect(d.podcast!.medium).toBeUndefined();
     expect(d.items[0].itunes!.episodeType).toBeUndefined();
     expect(d.items[0].itunes!.episode).toBeUndefined();
+  });
+});
+
+describe("podcast emit", () => {
+  it("RSS round-trip preserves podcast metadata", () => {
+    const back = parseFeed(buildRss(doc));
+    expect(back.items[0].enclosure).toEqual(doc.items[0].enclosure);
+    expect(back.itunes).toEqual(doc.itunes);
+    expect(back.podcast).toEqual(doc.podcast);
+    expect(back.items[0].itunes).toEqual(doc.items[0].itunes);
+    expect(back.items[0].podcast).toEqual(doc.items[0].podcast);
+    expect(back.items[0].content_encoded).toBe(doc.items[0].content_encoded);
+  });
+
+  it("declares namespaces only when used", () => {
+    const withPodcast = buildRss(doc);
+    expect(withPodcast).toContain('xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"');
+    expect(withPodcast).toContain('xmlns:podcast="https://podcastindex.org/namespace/1.0"');
+    expect(withPodcast).toContain('xmlns:content="http://purl.org/rss/1.0/modules/content/"');
+    const plain = buildRss(parseFeed(`<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>t</title><link>https://x</link><description>d</description>
+      <item><title>i</title><link>https://x/1</link><guid>g</guid></item></channel></rss>`));
+    expect(plain).not.toContain("xmlns:itunes");
+    expect(plain).not.toContain("xmlns:podcast");
+    expect(plain).not.toContain("xmlns:content");
+  });
+
+  it("Atom output includes enclosure links and round-trips them", () => {
+    const atom = buildAtom(doc);
+    expect(atom).toContain('rel="enclosure"');
+    expect(atom).toContain('href="https://cdn.example.com/ep3.mp3"');
+    const back = parseFeed(atom);
+    expect(back.items[0].enclosure).toEqual({
+      url: "https://cdn.example.com/ep3.mp3",
+      length: 12345678,
+      type: "audio/mpeg",
+    });
   });
 });
