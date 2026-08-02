@@ -1,0 +1,14 @@
+name = "feedforge"
+main = "src/worker.ts"
+compatibility_date = "2025-06-01"
+
+[triggers]
+crons = ["*/30 * * * *"]
+
+[[kv_namespaces]]
+binding = "FEEDS"
+id = "00000000000000000000000000000000"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "feedforge"
