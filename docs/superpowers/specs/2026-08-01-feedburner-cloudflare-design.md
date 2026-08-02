@@ -40,7 +40,7 @@ Option A: **Worker + KV + Cron + Analytics Engine.**
 | Binding | Purpose | Cost notes |
 |---|---|---|
 | Workers | fetch + scheduled handlers | free tier: 100k req/day |
-| KV namespace | feed bodies (`feed:<id>`), registry (`feeds.json`), host map (`host:<hostname>`) | free: 100k reads/day |
+| KV namespace | feed bodies (`feed:<id>`), registry + host map (`feeds.json`) | free: 100k reads/day |
 | Analytics Engine | per-request datapoints | free |
 | Cron Triggers | poll schedule (default `*/30 * * * *`, per-feed override) | free |
 
@@ -92,7 +92,7 @@ Admin has no web surface; security = possession of the Cloudflare account.
 
 ## MyBrand
 
-- KV key `host:<hostname>` → feed id; resolved first in the fetch handler
+- KV key `feeds.json` holds host mappings (`domains`) → feed id; resolved first in the fetch handler
 - Custom domains attached via Workers custom-domain routes, added to `wrangler.toml` (CLI prints the exact block)
 - On the mapped host, `/` serves the feed; path-based feeds still work on the primary domain
 
