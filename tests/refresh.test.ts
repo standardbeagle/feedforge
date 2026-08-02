@@ -45,4 +45,20 @@ describe("refresh webhook", () => {
   it("404s unknown feeds", async () => {
     expect((await call("ghost", "test-refresh-secret")).status).toBe(404);
   });
+
+  it("response omits the stored feed body", async () => {
+    fetchMock.get("https://origin.test").intercept({ path: "/rss" }).reply(200, rss);
+    const res = await call("blog", "test-refresh-secret");
+    const json = (await res.json()) as any;
+    expect(json.feed).toBeUndefined();
+    expect(JSON.stringify(json)).not.toContain("<rss");
+  });
+
+  it("404s on trailing path segments", async () => {
+    const res = await SELF.fetch("https://feeds.example.com/api/feeds/blog/refresh/extra", {
+      method: "POST",
+      headers: { authorization: "Bearer test-refresh-secret" },
+    });
+    expect(res.status).toBe(404);
+  });
 });

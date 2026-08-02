@@ -29,7 +29,7 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
   }
   const parts = url.pathname.split("/").filter(Boolean); // ["api","channels",<id>?,"items"?]
 
-  if (parts[1] === "feeds" && parts[3] === "refresh" && request.method === "POST") {
+  if (parts[1] === "feeds" && parts[3] === "refresh" && parts.length === 4 && request.method === "POST") {
     const secret = env.REFRESH_TOKEN;
     if (!secret) return json({ error: "not found" }, 404);
     const token = bearer(request);
@@ -40,7 +40,10 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
     const entry = feeds.find((f) => f.id === parts[2]);
     if (!entry) return json({ error: "feed not found" }, 404);
     const result = await pollFeed(entry, store, fetch, { force: true });
-    return json(result, result.status === "error" ? 502 : 200);
+    return json(
+      { id: result.id, status: result.status, message: result.message },
+      result.status === "error" ? 502 : 200,
+    );
   }
 
   if (parts[1] !== "channels") return json({ error: "not found" }, 404);
