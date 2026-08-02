@@ -31,7 +31,8 @@ export async function createChannel(
   kv: KVNamespace,
   opts: { title: string; description?: string; ttl_hours?: number },
 ): Promise<{ channel: Channel; writeToken: string }> {
-  const ttl = Math.min(Math.max(opts.ttl_hours ?? DEFAULT_TTL_HOURS, MIN_TTL_HOURS), MAX_TTL_HOURS);
+  const raw = typeof opts.ttl_hours === "number" && Number.isFinite(opts.ttl_hours) ? opts.ttl_hours : DEFAULT_TTL_HOURS;
+  const ttl = Math.min(Math.max(raw, MIN_TTL_HOURS), MAX_TTL_HOURS);
   const now = Date.now();
   const writeToken = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
   const channel: Channel = {

@@ -23,6 +23,11 @@ describe("channels", () => {
     expect(Date.parse(hi.channel.expires_at) - Date.parse(hi.channel.created_at)).toBe(720 * 3600_000);
   });
 
+  it("falls back to default TTL for non-numeric ttl_hours", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t", ttl_hours: "abc" as any });
+    expect(Date.parse(channel.expires_at) - Date.parse(channel.created_at)).toBe(7 * 24 * 3600_000);
+  });
+
   it("verifies write tokens against the stored hash", async () => {
     const { channel, writeToken } = await createChannel(env.FEEDS, { title: "t" });
     expect(await verifyToken(channel, writeToken)).toBe(true);
