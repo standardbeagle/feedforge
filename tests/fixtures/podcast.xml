@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Ship It</title>
+    <link>https://pod.example.com</link>
+    <description>A deploy podcast</description>
+    <itunes:author>Deploy Bot</itunes:author>
+    <itunes:image href="https://pod.example.com/cover.jpg"/>
+    <itunes:summary>Weekly deploys</itunes:summary>
+    <itunes:owner>
+      <itunes:name>The Bot</itunes:name>
+      <itunes:email>bot@pod.example.com</itunes:email>
+    </itunes:owner>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Technology">
+      <itunes:category text="Podcasting"/>
+    </itunes:category>
+    <podcast:guid>9b024349-ccf0-5f69-a609-6b82873eab3a</podcast:guid>
+    <podcast:locked owner="bot@pod.example.com">yes</podcast:locked>
+    <podcast:medium>podcast</podcast:medium>
+    <podcast:person role="host" img="https://pod.example.com/bot.png">Deploy Bot</podcast:person>
+    <podcast:funding url="https://pod.example.com/support">Support the show</podcast:funding>
+    <podcast:location geo="geo:30.2672,97.7431" osm="R113314">Austin, TX</podcast:location>
+    <podcast:value type="lightning" method="keysend" suggested="0.00000005000">
+      <podcast:valueRecipient name="host" address="03ae9f91a0cb8ff43840e3c322c4c61f019d8c1c3cea15a25cfc425ac605e61a4a" type="node" split="100"/>
+    </podcast:value>
+    <item>
+      <title>Episode 3: Blue-green</title>
+      <link>https://pod.example.com/ep3</link>
+      <guid>https://pod.example.com/ep3</guid>
+      <pubDate>Mon, 15 Jun 2026 09:00:00 GMT</pubDate>
+      <description>Blue-green deploys</description>
+      <enclosure url="https://cdn.example.com/ep3.mp3" length="12345678" type="audio/mpeg"/>
+      <itunes:duration>32:14</itunes:duration>
+      <itunes:episode>3</itunes:episode>
+      <itunes:season>1</itunes:season>
+      <itunes:episodeType>full</itunes:episodeType>
+      <podcast:chapters url="https://pod.example.com/ep3-chapters.json"/>
+      <podcast:transcript url="https://pod.example.com/ep3.vtt" type="text/vtt" language="en"/>
+      <content:encoded>&lt;p&gt;Full show notes&lt;/p&gt;</content:encoded>
+    </item>
+  </channel>
+</rss>
