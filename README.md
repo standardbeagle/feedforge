@@ -3,7 +3,7 @@
 [![CI](https://github.com/standardbeagle/feedforge/actions/workflows/ci.yml/badge.svg)](https://github.com/standardbeagle/feedforge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/cloudflare-workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
-[![Docs](https://img.shields.io/badge/docs-dev.standardbeagle.com-8A2BE2)](https://dev.standardbeagle.com)
+[![Docs](https://img.shields.io/badge/docs-dev.standardbeagle.com-8A2BE2)](https://dev.standardbeagle.com/feedforge/)
 
 An open-source FeedBurner replacement that runs on Cloudflare's free tier. Point it
 at your RSS/Atom/RDF feed and it gives you a stable feed URL served from
@@ -20,7 +20,7 @@ notify your feed reader when it finishes.
 - **MyBrand** — map your own domain to a feed
 - **Refresh webhook** — hosts ping, feedforge re-polls immediately
 
-Docs: **https://dev.standardbeagle.com**
+Docs: **https://dev.standardbeagle.com/feedforge/**
 
 ## Setup
 
