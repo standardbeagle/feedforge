@@ -5,6 +5,7 @@ export interface PollResult {
   id: string;
   status: "ok" | "not-modified" | "skipped" | "error";
   message?: string;
+  feed?: StoredFeed;
 }
 
 const MAX_FEED_BYTES = 5 * 1024 * 1024;
@@ -75,7 +76,7 @@ export async function pollFeed(
       },
     };
     await store.putFeed(entry.id, stored);
-    return { id: entry.id, status: "ok" };
+    return { id: entry.id, status: "ok", feed: stored };
   } catch (e) {
     if (e instanceof FeedParseError) return fail(`unparseable feed: ${e.message}`);
     throw e;

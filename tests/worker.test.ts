@@ -53,6 +53,26 @@ describe("fetch handler", () => {
     expect(res.status).toBe(404);
   });
 
+  it("returns 502 when origin poll fails and nothing is stored", async () => {
+    const store = new KVFeedStore(env.FEEDS);
+    await store.putRegistry({
+      feeds: [{ id: "broken", origin: "https://origin.test/down", poll_minutes: 30, created_at: "2026-08-01T00:00:00Z" }],
+      domains: {},
+    });
+    fetchMock.get("https://origin.test").intercept({ path: "/down" }).reply(500, "oops");
+    const res = await SELF.fetch("https://feeds.example.com/broken", {
+      headers: { "user-agent": "FreshRSS/1.24" },
+    });
+    expect(res.status).toBe(502);
+  });
+
+  it("prefers ?format=atom over Accept text/html", async () => {
+    const res = await SELF.fetch("https://feeds.example.com/blog?format=atom", {
+      headers: { accept: "text/html", "user-agent": "Mozilla/5.0 Chrome/126" },
+    });
+    expect(res.headers.get("content-type")).toContain("application/atom+xml");
+  });
+
   it("sets X-Feed-Stale when origin errors have accumulated", async () => {
     const store = new KVFeedStore(env.FEEDS);
     await store.putFeed("blog", {

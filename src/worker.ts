@@ -20,9 +20,16 @@ export default {
       const entry = reg.feeds.find((f) => f.id === feedId);
       if (!entry) return new Response("Feed not found", { status: 404 });
       const result = await pollFeed(entry, store);
-      stored = await store.getFeed(feedId);
-      if (!stored) {
-        return new Response(`Feed unavailable: ${result.message}`, { status: 502 });
+      if (result.status === "error") {
+        stored = await store.getFeed(feedId);
+        if (!stored) {
+          return new Response(`Feed unavailable: ${result.message}`, { status: 502 });
+        }
+      } else {
+        stored = result.feed ?? (await store.getFeed(feedId));
+        if (!stored) {
+          return new Response("Feed temporarily unavailable", { status: 503 });
+        }
       }
     }
 
@@ -31,6 +38,13 @@ export default {
     const staleHeader: Record<string, string> = stale ? { "x-feed-stale": "true" } : {};
 
     const ua = request.headers.get("user-agent") ?? "";
+
+    if (url.searchParams.get("format") === "atom") {
+      return new Response(buildAtom(doc), {
+        headers: { "content-type": "application/atom+xml; charset=utf-8", ...staleHeader },
+      });
+    }
+
     const wantsHtml =
       (request.headers.get("accept") ?? "").includes("text/html") &&
       classifyUa(ua).kind !== "aggregator";
@@ -38,12 +52,6 @@ export default {
     if (wantsHtml) {
       return new Response(renderFeedPage(doc, url.toString(), stale), {
         headers: { "content-type": "text/html; charset=utf-8", ...staleHeader },
-      });
-    }
-
-    if (url.searchParams.get("format") === "atom") {
-      return new Response(buildAtom(doc), {
-        headers: { "content-type": "application/atom+xml; charset=utf-8", ...staleHeader },
       });
     }
 
