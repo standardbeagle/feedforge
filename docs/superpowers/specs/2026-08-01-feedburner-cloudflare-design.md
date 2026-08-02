@@ -14,6 +14,7 @@ An open-source reimplementation of Google FeedBurner's core features, built on C
 - Feed analytics: subscriber estimates, daily request counts, per-feed aggregates
 - Browser-friendly feed view: styled HTML landing page for humans who open a feed URL
 - MyBrand: map custom domains to feeds
+- Short-lived channels: capability-token API for agents to create/publish/delete ephemeral feeds
 
 **Out of scope (explicitly deferred):**
 - RSS-to-email subscriptions
@@ -112,6 +113,18 @@ Admin has no web surface; security = possession of the Cloudflare account.
 - `wrangler.toml` in repo; `pnpm deploy` → `wrangler deploy`
 - Repo includes: Worker source, CLI, fixtures, tests, README with setup (create KV namespace, set account id, add routes)
 - License: MIT
+
+## Short-lived channels (agent/human coordination)
+
+Channels are feeds published *to* feedforge rather than proxied from an origin — for agent/agent and agent/human coordination (e.g. a long-running task posts an item when it completes; the human's feed reader picks it up).
+
+- **Storage**: KV key `channel:<id>` → `{ id, title, description, write_token_hash, created_at, expires_at, items[] }`. Items form a ring buffer: max 100 items (oldest dropped), max 64KB per item body.
+- **API** (same Worker, JSON):
+  - `POST /api/channels` `{title, description?, ttl_hours?}` → `201 {id, write_token, feed_url, expires_at}`. `id` and `write_token` are random (UUID / 32-byte hex); only the SHA-256 hash of the token is stored.
+  - `POST /api/channels/<id>/items` `{title, link?, description?}` with `Authorization: Bearer <write_token>` → appends item (`guid` = UUID, `pubDate` = now).
+  - `DELETE /api/channels/<id>` with bearer token → removes the channel.
+- **Serving**: fetch handler falls through from registry feeds to channels; channel XML rendered on the fly with the same `buildRss` pipeline — analytics, browser view, and MyBrand path all apply unchanged.
+- **Expiry**: TTL default 7 days, min 1 hour, max 30 days. Lazy 404 on expired read/write; cron sweep lists `channel:` prefix and deletes expired entries.
 
 ## Future extension points (designed-for, not built)
 

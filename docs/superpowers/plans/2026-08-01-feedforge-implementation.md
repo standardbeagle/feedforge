@@ -1620,8 +1620,666 @@ git commit -m "test: cron cycle e2e; docs: setup and usage README"
 
 ---
 
+### Task 11: Channel store + ring buffer (`src/channels.ts`)
+
+**Files:**
+- Create: `src/channels.ts`
+- Test: `tests/channels.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/channels.test.ts`:
+```ts
+import { describe, it, expect } from "vitest";
+import { env } from "cloudflare:test";
+import {
+  createChannel, getChannel, appendItem, deleteChannel, sweepExpired, verifyToken,
+} from "../src/channels";
+
+describe("channels", () => {
+  it("creates a channel with defaults and returns a write token", async () => {
+    const { channel, writeToken } = await createChannel(env.FEEDS, { title: "Build bot" });
+    expect(channel.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(writeToken).toMatch(/^[0-9a-f]{64}$/);
+    expect(channel.title).toBe("Build bot");
+    expect(channel.items).toEqual([]);
+    const ttlMs = Date.parse(channel.expires_at) - Date.parse(channel.created_at);
+    expect(ttlMs).toBe(7 * 24 * 3600_000);
+    expect(channel.write_token_hash).not.toBe(writeToken);
+  });
+
+  it("clamps ttl_hours to [1, 720]", async () => {
+    const lo = await createChannel(env.FEEDS, { title: "a", ttl_hours: 0 });
+    const hi = await createChannel(env.FEEDS, { title: "b", ttl_hours: 99999 });
+    expect(Date.parse(lo.channel.expires_at) - Date.parse(lo.channel.created_at)).toBe(3600_000);
+    expect(Date.parse(hi.channel.expires_at) - Date.parse(hi.channel.created_at)).toBe(720 * 3600_000);
+  });
+
+  it("verifies write tokens against the stored hash", async () => {
+    const { channel, writeToken } = await createChannel(env.FEEDS, { title: "t" });
+    expect(await verifyToken(channel, writeToken)).toBe(true);
+    expect(await verifyToken(channel, "0".repeat(64))).toBe(false);
+  });
+
+  it("appends items with generated guid and pubDate", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    const updated = await appendItem(env.FEEDS, channel.id, { title: "Task done", link: "https://ci.example/build/1", description: "ok" });
+    expect(updated!.items).toHaveLength(1);
+    expect(updated!.items[0].title).toBe("Task done");
+    expect(updated!.items[0].guid).toMatch(/^[0-9a-f-]{36}$/);
+    expect(updated!.items[0].pubDate).toBeTruthy();
+  });
+
+  it("drops oldest items beyond the 100-item cap", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    for (let i = 0; i < 105; i++) {
+      await appendItem(env.FEEDS, channel.id, { title: `item ${i}` });
+    }
+    const final = await getChannel(env.FEEDS, channel.id);
+    expect(final!.items).toHaveLength(100);
+    expect(final!.items[0].title).toBe("item 5");
+    expect(final!.items[99].title).toBe("item 104");
+  });
+
+  it("rejects items over 64KB", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    await expect(
+      appendItem(env.FEEDS, channel.id, { title: "big", description: "x".repeat(70_000) }),
+    ).rejects.toThrow(/64KB/);
+  });
+
+  it("deletes channels", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    await deleteChannel(env.FEEDS, channel.id);
+    expect(await getChannel(env.FEEDS, channel.id)).toBeNull();
+  });
+
+  it("sweepExpired removes only expired channels", async () => {
+    const fresh = await createChannel(env.FEEDS, { title: "fresh" });
+    const old = await createChannel(env.FEEDS, { title: "old" });
+    const stale = { ...old.channel, expires_at: new Date(Date.now() - 1000).toISOString() };
+    await env.FEEDS.put(`channel:${old.channel.id}`, JSON.stringify(stale));
+    const swept = await sweepExpired(env.FEEDS);
+    expect(swept).toContain(old.channel.id);
+    expect(swept).not.toContain(fresh.channel.id);
+    expect(await getChannel(env.FEEDS, old.channel.id)).toBeNull();
+    expect(await getChannel(env.FEEDS, fresh.channel.id)).not.toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/channels.test.ts`
+Expected: FAIL — `../src/channels` does not exist
+
+- [ ] **Step 3: Implement `src/channels.ts`**
+
+```ts
+export interface ChannelItem {
+  title: string;
+  link?: string;
+  guid: string;
+  pubDate: string;
+  description?: string;
+}
+
+export interface Channel {
+  id: string;
+  title: string;
+  description: string;
+  write_token_hash: string;
+  created_at: string;
+  expires_at: string;
+  items: ChannelItem[];
+}
+
+export const MAX_ITEMS = 100;
+export const MAX_ITEM_BYTES = 64 * 1024;
+const DEFAULT_TTL_HOURS = 24 * 7;
+const MIN_TTL_HOURS = 1;
+const MAX_TTL_HOURS = 24 * 30;
+
+async function sha256hex(data: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function createChannel(
+  kv: KVNamespace,
+  opts: { title: string; description?: string; ttl_hours?: number },
+): Promise<{ channel: Channel; writeToken: string }> {
+  const ttl = Math.min(Math.max(opts.ttl_hours ?? DEFAULT_TTL_HOURS, MIN_TTL_HOURS), MAX_TTL_HOURS);
+  const now = Date.now();
+  const writeToken = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+  const channel: Channel = {
+    id: crypto.randomUUID(),
+    title: opts.title,
+    description: opts.description ?? "",
+    write_token_hash: await sha256hex(writeToken),
+    created_at: new Date(now).toISOString(),
+    expires_at: new Date(now + ttl * 3600_000).toISOString(),
+    items: [],
+  };
+  await kv.put(`channel:${channel.id}`, JSON.stringify(channel));
+  return { channel, writeToken };
+}
+
+export async function getChannel(kv: KVNamespace, id: string): Promise<Channel | null> {
+  const raw = await kv.get(`channel:${id}`);
+  if (!raw) return null;
+  const channel = JSON.parse(raw) as Channel;
+  if (Date.parse(channel.expires_at) <= Date.now()) return null;
+  return channel;
+}
+
+export async function verifyToken(channel: Channel, token: string): Promise<boolean> {
+  return (await sha256hex(token)) === channel.write_token_hash;
+}
+
+export async function appendItem(
+  kv: KVNamespace,
+  id: string,
+  item: { title: string; link?: string; description?: string },
+): Promise<Channel | null> {
+  const size = new TextEncoder().encode(
+    item.title + (item.link ?? "") + (item.description ?? ""),
+  ).byteLength;
+  if (size > MAX_ITEM_BYTES) throw new Error(`item exceeds 64KB limit (${size} bytes)`);
+
+  const channel = await getChannel(kv, id);
+  if (!channel) return null;
+  channel.items.push({
+    title: item.title,
+    link: item.link,
+    description: item.description,
+    guid: crypto.randomUUID(),
+    pubDate: new Date().toUTCString(),
+  });
+  if (channel.items.length > MAX_ITEMS) {
+    channel.items = channel.items.slice(channel.items.length - MAX_ITEMS);
+  }
+  await kv.put(`channel:${id}`, JSON.stringify(channel));
+  return channel;
+}
+
+export async function deleteChannel(kv: KVNamespace, id: string): Promise<void> {
+  await kv.delete(`channel:${id}`);
+}
+
+export async function sweepExpired(kv: KVNamespace): Promise<string[]> {
+  const swept: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await kv.list({ prefix: "channel:", cursor });
+    for (const key of page.keys) {
+      const raw = await kv.get(key.name);
+      if (raw && Date.parse(JSON.parse(raw).expires_at) <= Date.now()) {
+        await kv.delete(key.name);
+        swept.push(key.name.slice("channel:".length));
+      }
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return swept;
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run tests/channels.test.ts`
+Expected: PASS (8 tests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/channels.ts tests/channels.test.ts
+git commit -m "feat: short-lived channel store with capability tokens and ring buffer"
+```
+
+---
+
+### Task 12: Channel API routes (create / publish / delete)
+
+**Files:**
+- Create: `src/api.ts`
+- Modify: `src/worker.ts`
+- Test: `tests/api.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/api.test.ts`:
+```ts
+import { describe, it, expect } from "vitest";
+import { SELF } from "cloudflare:test";
+
+async function mkChannel(body: object = { title: "CI bot", ttl_hours: 2 }) {
+  const res = await SELF.fetch("https://feeds.example.com/api/channels", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { res, json: (await res.json()) as any };
+}
+
+describe("channel API", () => {
+  it("creates a channel and returns id, token, feed_url, expiry", async () => {
+    const { res, json } = await mkChannel();
+    expect(res.status).toBe(201);
+    expect(json.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(json.write_token).toMatch(/^[0-9a-f]{64}$/);
+    expect(json.feed_url).toBe(`https://feeds.example.com/${json.id}`);
+    expect(json.expires_at).toBeTruthy();
+  });
+
+  it("rejects create without a title", async () => {
+    const { res } = await mkChannel({});
+    expect(res.status).toBe(400);
+  });
+
+  it("publishes an item with the write token", async () => {
+    const { json } = await mkChannel();
+    const res = await SELF.fetch(`https://feeds.example.com/api/channels/${json.id}/items`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${json.write_token}`,
+      },
+      body: JSON.stringify({ title: "Build finished", link: "https://ci.example/1", description: "green" }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects publish without or with wrong token", async () => {
+    const { json } = await mkChannel();
+    const noAuth = await SELF.fetch(`https://feeds.example.com/api/channels/${json.id}/items`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "x" }),
+    });
+    expect(noAuth.status).toBe(401);
+    const badAuth = await SELF.fetch(`https://feeds.example.com/api/channels/${json.id}/items`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${"f".repeat(64)}` },
+      body: JSON.stringify({ title: "x" }),
+    });
+    expect(badAuth.status).toBe(403);
+  });
+
+  it("returns 404 publishing to a missing channel", async () => {
+    const res = await SELF.fetch(`https://feeds.example.com/api/channels/${crypto.randomUUID()}/items`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${"f".repeat(64)}` },
+      body: JSON.stringify({ title: "x" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("deletes a channel with the write token", async () => {
+    const { json } = await mkChannel();
+    const res = await SELF.fetch(`https://feeds.example.com/api/channels/${json.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${json.write_token}` },
+    });
+    expect(res.status).toBe(204);
+    const again = await SELF.fetch(`https://feeds.example.com/api/channels/${json.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${json.write_token}` },
+    });
+    expect(again.status).toBe(404);
+  });
+
+  it("rejects oversized items", async () => {
+    const { json } = await mkChannel();
+    const res = await SELF.fetch(`https://feeds.example.com/api/channels/${json.id}/items`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${json.write_token}` },
+      body: JSON.stringify({ title: "big", description: "x".repeat(70_000) }),
+    });
+    expect(res.status).toBe(413);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/api.test.ts`
+Expected: FAIL — `/api/*` routes 404
+
+- [ ] **Step 3: Implement `src/api.ts`**
+
+```ts
+import { createChannel, getChannel, appendItem, deleteChannel, verifyToken } from "./channels";
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+function bearer(request: Request): string | null {
+  const m = (request.headers.get("authorization") ?? "").match(/^Bearer (.+)$/);
+  return m ? m[1] : null;
+}
+
+async function authedChannel(env: Env, id: string, request: Request): Promise<Response | import("./channels").Channel> {
+  const channel = await getChannel(env.FEEDS, id);
+  if (!channel) return json({ error: "channel not found" }, 404);
+  const token = bearer(request);
+  if (!token) return json({ error: "missing bearer token" }, 401);
+  if (!(await verifyToken(channel, token))) return json({ error: "invalid token" }, 403);
+  return channel;
+}
+
+export async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
+  const parts = url.pathname.split("/").filter(Boolean); // ["api","channels",<id>?,"items"?]
+
+  if (request.method === "POST" && parts.length === 2) {
+    let body: { title?: string; description?: string; ttl_hours?: number };
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "invalid JSON body" }, 400);
+    }
+    if (!body.title || typeof body.title !== "string") {
+      return json({ error: "title is required" }, 400);
+    }
+    const { channel, writeToken } = await createChannel(env.FEEDS, body as { title: string });
+    return json({
+      id: channel.id,
+      write_token: writeToken,
+      feed_url: `${url.origin}/${channel.id}`,
+      expires_at: channel.expires_at,
+    }, 201);
+  }
+
+  const id = parts[2];
+  if (!id) return json({ error: "not found" }, 404);
+
+  if (request.method === "POST" && parts[3] === "items") {
+    const auth = await authedChannel(env, id, request);
+    if (auth instanceof Response) return auth;
+    let item: { title?: string; link?: string; description?: string };
+    try {
+      item = await request.json();
+    } catch {
+      return json({ error: "invalid JSON body" }, 400);
+    }
+    if (!item.title || typeof item.title !== "string") {
+      return json({ error: "title is required" }, 400);
+    }
+    try {
+      await appendItem(env.FEEDS, id, item as { title: string });
+    } catch (e) {
+      if ((e as Error).message.includes("64KB")) return json({ error: (e as Error).message }, 413);
+      throw e;
+    }
+    return json({ ok: true }, 201);
+  }
+
+  if (request.method === "DELETE" && parts.length === 3) {
+    const auth = await authedChannel(env, id, request);
+    if (auth instanceof Response) return auth;
+    await deleteChannel(env.FEEDS, id);
+    return new Response(null, { status: 204 });
+  }
+
+  return json({ error: "not found" }, 404);
+}
+```
+
+Wire into `src/worker.ts` fetch handler, at the top:
+
+```ts
+    if (url.pathname.startsWith("/api/")) {
+      return handleApi(request, env, url);
+    }
+```
+
+Add the import: `import { handleApi } from "./api";`
+
+- [ ] **Step 4: Run tests**
+
+Run: `npx vitest run tests/api.test.ts`
+Expected: PASS (7 tests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/api.ts src/worker.ts tests/api.test.ts
+git commit -m "feat: channel REST API with bearer capability tokens"
+```
+
+---
+
+### Task 13: Serve channels as feeds + cron expiry sweep
+
+**Files:**
+- Modify: `src/worker.ts`
+- Modify: `src/router.ts`
+- Test: `tests/channel-serving.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/channel-serving.test.ts`:
+```ts
+import { describe, it, expect } from "vitest";
+import { SELF } from "cloudflare:test";
+
+async function mkChannelWithItem() {
+  const create = await SELF.fetch("https://feeds.example.com/api/channels", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Deploy bot", description: "deploy notifications" }),
+  });
+  const ch = (await create.json()) as any;
+  await SELF.fetch(`https://feeds.example.com/api/channels/${ch.id}/items`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${ch.write_token}` },
+    body: JSON.stringify({ title: "v42 deployed", link: "https://ci.example/v42" }),
+  });
+  return ch;
+}
+
+describe("channel feed serving", () => {
+  it("serves a channel as RSS at /<id>", async () => {
+    const ch = await mkChannelWithItem();
+    const res = await SELF.fetch(`https://feeds.example.com/${ch.id}`, {
+      headers: { "user-agent": "Miniflux/2.0" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/rss+xml");
+    const body = await res.text();
+    expect(body).toContain("Deploy bot");
+    expect(body).toContain("v42 deployed");
+  });
+
+  it("serves the browser view for channels", async () => {
+    const ch = await mkChannelWithItem();
+    const res = await SELF.fetch(`https://feeds.example.com/${ch.id}`, {
+      headers: { accept: "text/html", "user-agent": "Mozilla/5.0 Chrome/126" },
+    });
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("Deploy bot");
+  });
+
+  it("serves Atom format for channels", async () => {
+    const ch = await mkChannelWithItem();
+    const res = await SELF.fetch(`https://feeds.example.com/${ch.id}?format=atom`, {
+      headers: { "user-agent": "Miniflux/2.0" },
+    });
+    expect(res.headers.get("content-type")).toContain("application/atom+xml");
+    expect(await res.text()).toContain("v42 deployed");
+  });
+
+  it("404s after channel deletion", async () => {
+    const ch = await mkChannelWithItem();
+    await SELF.fetch(`https://feeds.example.com/api/channels/${ch.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${ch.write_token}` },
+    });
+    const res = await SELF.fetch(`https://feeds.example.com/${ch.id}`, {
+      headers: { "user-agent": "Miniflux/2.0" },
+    });
+    expect(res.status).toBe(404);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/channel-serving.test.ts`
+Expected: FAIL — channel ids aren't resolvable feeds yet
+
+- [ ] **Step 3: Wire channel serving into `src/worker.ts`**
+
+In the fetch handler, after `resolveFeedId` returns null and before the 404, treat the first path segment as a possible channel id. Replace the resolution block:
+
+```ts
+    const feedId = await resolveFeedId(url, store);
+    const channelId = feedId ?? url.pathname.split("/").filter(Boolean)[0] ?? null;
+    if (!channelId) return new Response("Not found", { status: 404 });
+
+    const ua = request.headers.get("user-agent") ?? "";
+    ctx.waitUntil(recordRequest(env, channelId, request));
+
+    let doc: FeedDoc;
+    let stale: string | null = null;
+    let staleHeader: Record<string, string> = {};
+
+    const stored = feedId ? await store.getFeed(feedId) : null;
+    if (stored) {
+      doc = parseFeed(stored.xml);
+      stale = stored.meta.error_count > 0 ? (stored.meta.last_error ?? "stale") : null;
+    } else {
+      const channel = await getChannel(env.FEEDS, channelId);
+      if (channel) {
+        doc = {
+          title: channel.title,
+          link: `${url.origin}/${channel.id}`,
+          description: channel.description,
+          items: channel.items.map((i) => ({
+            title: i.title,
+            link: i.link ?? `${url.origin}/${channel.id}`,
+            guid: i.guid,
+            pubDate: i.pubDate,
+            description: i.description,
+          })),
+        };
+      } else if (feedId) {
+        // registry feed never polled: inline first-fetch (existing Task 6 logic)
+        const reg = await store.getRegistry();
+        const entry = reg.feeds.find((f) => f.id === feedId);
+        if (!entry) return new Response("Feed not found", { status: 404 });
+        const { pollFeed } = await import("./poller");
+        const result = await pollFeed(entry, store);
+        const after = await store.getFeed(feedId);
+        if (!after) return new Response(`Feed unavailable: ${result.message}`, { status: 502 });
+        doc = parseFeed(after.xml);
+      } else {
+        return new Response("Feed not found", { status: 404 });
+      }
+    }
+    if (stale) staleHeader = { "x-feed-stale": "true" };
+```
+
+The remainder (wantsHtml / format=atom / RSS response) is unchanged but operates on `doc` and builds RSS via `buildRss(doc)` when the stored-xml path wasn't taken — restructure so the final RSS response is:
+
+```ts
+    return new Response(stored ? stored.xml : buildRss(doc), {
+      headers: { "content-type": "application/rss+xml; charset=utf-8", ...staleHeader },
+    });
+```
+
+Add imports: `import { getChannel } from "./channels";`, `import { buildRss, type FeedDoc } from "./normalize";` (merge with existing normalize import).
+
+Also update `scheduled` in `src/worker.ts` to sweep expired channels:
+
+```ts
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      (async () => {
+        await pollAll(new KVFeedStore(env.FEEDS));
+        await sweepExpired(env.FEEDS);
+      })(),
+    );
+  },
+```
+
+Add `import { sweepExpired } from "./channels";`.
+
+- [ ] **Step 4: Run full suite**
+
+Run: `npx vitest run`
+Expected: all suites PASS (including prior worker tests — registry feeds must still resolve through the same code path)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/worker.ts src/router.ts tests/channel-serving.test.ts
+git commit -m "feat: serve channels as feeds; sweep expired channels on cron"
+```
+
+---
+
+### Task 14: Channel docs + end-to-end coordination example
+
+**Files:**
+- Modify: `README.md`
+
+- [ ] **Step 1: Add channels section to `README.md`**
+
+Insert before the `## Architecture` section:
+
+```markdown
+## Short-lived channels (agent coordination)
+
+Channels are feeds published *to* feedforge — for agent/human coordination. A
+long-running task creates a channel, posts items as it progresses, and a human's
+feed reader (or another agent) consumes the updates.
+
+Create a channel:
+
+    curl -X POST https://<your-worker-domain>/api/channels \
+      -H 'content-type: application/json' \
+      -d '{"title": "Deploy bot", "ttl_hours": 24}'
+
+    # => {"id":"...","write_token":"...","feed_url":"https://.../<id>","expires_at":"..."}
+
+Subscribe to `feed_url` in any feed reader. Publish an item:
+
+    curl -X POST https://<your-worker-domain>/api/channels/<id>/items \
+      -H 'authorization: Bearer <write_token>' \
+      -H 'content-type: application/json' \
+      -d '{"title": "v42 deployed", "link": "https://ci.example/v42"}'
+
+Delete early (channels also auto-expire after `ttl_hours`, default 7 days, max 30):
+
+    curl -X DELETE https://<your-worker-domain>/api/channels/<id> \
+      -H 'authorization: Bearer <write_token>'
+
+Limits: 100 items per channel (oldest dropped), 64KB per item. Reading a channel
+feed is public — the id is unguessable. Only the SHA-256 hash of the write token
+is stored.
+```
+
+- [ ] **Step 2: Run full verification**
+
+Run: `npx tsc --noEmit && npx vitest run`
+Expected: clean typecheck, all tests PASS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: channel API usage for agent coordination"
+```
+
+---
+
 ## Self-Review Notes
 
-- **Spec coverage:** proxying/normalization (T2–3), cron-poll + store (T5), aggregate analytics (T7), browser view (T8), MyBrand (T4 resolveHost, T6 router, T9 map-domain), CLI-only admin (T9), error handling/last-good (T5, T6 X-Feed-Stale), tests (every task + T10 e2e), deployment (T1 wrangler.toml, T10 README). RSS-to-email, click tracking, multi-user — explicitly deferred per spec.
+- **Spec coverage:** proxying/normalization (T2–3), cron-poll + store (T5), aggregate analytics (T7), browser view (T8), MyBrand (T4 resolveHost, T6 router, T9 map-domain), CLI-only admin (T9), error handling/last-good (T5, T6 X-Feed-Stale), tests (every task + T10 e2e), deployment (T1 wrangler.toml, T10 README), channels (T11 store, T12 API, T13 serving+sweep, T14 docs). RSS-to-email, click tracking, multi-user — explicitly deferred per spec.
 - **Type consistency:** `FeedDoc`/`FeedItem` (T2) used by T3, T5, T6, T8. `FeedStore`/`Registry`/`StoredFeed` (T4) used by T5, T6, T9, T10. `classifyUa`/`recordRequest` signatures identical between T6 stub and T7 implementation.
 - **Known follow-ups (not plan blockers):** KV id placeholder in wrangler.toml must be replaced before deploy (README step 2 covers it); `X-Feed-Stale` test in T6 mutates shared KV state — run suites sequentially (vitest workers pool default isolates per file, so this is safe).
