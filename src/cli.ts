@@ -22,12 +22,20 @@ export function mapDomain(reg: Registry, hostname: string, id: string): Registry
   return { ...reg, domains: { ...reg.domains, [hostname]: id } };
 }
 
+export function isNotFoundError(msg: string): boolean {
+  return /not (found|exist)|does not exist|10007/i.test(msg);
+}
+
+let cachedNamespaceId: string | null = null;
+
 async function kvNamespaceId(): Promise<string> {
+  if (cachedNamespaceId) return cachedNamespaceId;
   const { readFileSync } = await import("node:fs");
   const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
   const m = toml.match(/kv_namespaces[\s\S]*?id\s*=\s*"([^"]+)"/);
   if (!m) throw new Error("no kv namespace id in wrangler.toml");
-  return m[1];
+  cachedNamespaceId = m[1];
+  return cachedNamespaceId;
 }
 
 async function kvGet(key: string): Promise<string | null> {
@@ -35,11 +43,13 @@ async function kvGet(key: string): Promise<string | null> {
   try {
     const out = execFileSync(
       "npx", ["wrangler", "kv", "key", "get", key, "--namespace-id", await kvNamespaceId(), "--remote"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
     return out.trim() || null;
-  } catch {
-    return null;
+  } catch (e) {
+    const msg = String((e as { stderr?: unknown })?.stderr ?? (e as Error).message ?? e);
+    if (isNotFoundError(msg)) return null;
+    throw new Error(`wrangler kv get '${key}' failed: ${msg}`);
   }
 }
 

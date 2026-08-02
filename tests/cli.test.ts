@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addFeed, removeFeed, mapDomain } from "../src/cli";
+import { addFeed, removeFeed, mapDomain, isNotFoundError } from "../src/cli";
 import type { Registry } from "../src/registry";
 
 const base: Registry = { feeds: [], domains: {} };
@@ -27,5 +27,10 @@ describe("cli registry edits", () => {
     const reg = addFeed(base, "blog", "https://example.com/rss");
     expect(() => mapDomain(reg, "feeds.example.org", "ghost")).toThrow(/no feed/);
     expect(mapDomain(reg, "feeds.example.org", "blog").domains["feeds.example.org"]).toBe("blog");
+  });
+
+  it("classifies not-found vs real errors", () => {
+    expect(isNotFoundError("A key with that name does not exist.")).toBe(true);
+    expect(isNotFoundError("network unreachable")).toBe(false);
   });
 });
