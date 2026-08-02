@@ -181,6 +181,8 @@ function parseItunesItem(i: Record<string, any>): ItunesItem | undefined {
 function parsePodcastChannel(c: Record<string, any>): PodcastChannelMeta | undefined {
   if (!hasPrefixed(c, "podcast:")) return undefined;
   const medium = text(c["podcast:medium"]);
+  const loc = c["podcast:location"];
+  const locName = str(loc);
   const podcast: PodcastChannelMeta = {
     guid: str(c["podcast:guid"]),
     locked: yesNo(c["podcast:locked"]),
@@ -194,11 +196,7 @@ function parsePodcastChannel(c: Record<string, any>): PodcastChannelMeta | undef
         return compact({ url, message: str(f) });
       })
       .filter((f) => f !== undefined),
-    location: compact({
-      name: text(c["podcast:location"]),
-      geo: attr(c["podcast:location"], "geo"),
-      osm: attr(c["podcast:location"], "osm"),
-    }),
+    location: loc && locName ? { name: locName, geo: attr(loc, "geo"), osm: attr(loc, "osm") } : undefined,
     value: parsePodcastValue(c["podcast:value"]),
   };
   if (podcast.funding!.length === 0) podcast.funding = undefined;

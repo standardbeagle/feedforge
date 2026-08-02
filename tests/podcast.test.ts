@@ -55,6 +55,15 @@ describe("podcast parsing", () => {
     expect(item.content_encoded).toBe("<p>Full show notes</p>");
   });
 
+  it("omits location when podcast:location is absent", () => {
+    const d = parseFeed(`<?xml version="1.0"?><rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel>
+      <title>t</title><link>https://x</link><description>d</description>
+      <podcast:guid>abc</podcast:guid>
+      <item><title>i</title><link>https://x/1</link><guid>g</guid></item></channel></rss>`);
+    expect(d.podcast!.guid).toBe("abc");
+    expect(d.podcast!.location).toBeUndefined();
+  });
+
   it("normalizes and drops invalid enum values", () => {
     const d = parseFeed(`<?xml version="1.0"?><rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel>
       <title>t</title><link>https://x</link><description>d</description>
