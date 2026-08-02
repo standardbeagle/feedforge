@@ -45,4 +45,12 @@ describe("parseFeed", () => {
   it("throws FeedParseError on non-feed XML", () => {
     expect(() => parseFeed("<html><body>nope</body></html>")).toThrow(FeedParseError);
   });
+
+  it("preserves ampersands inside CDATA", () => {
+    const doc = parseFeed(`<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>T</title><link>https://x</link><description><![CDATA[Tom & Jerry <b>html</b>]]></description>
+      <item><title>i</title><link>https://x/1</link><guid>g</guid></item>
+    </channel></rss>`);
+    expect(doc.description).toBe("Tom & Jerry <b>html</b>");
+  });
 });

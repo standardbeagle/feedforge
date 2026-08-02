@@ -20,7 +20,14 @@ export class FeedParseError extends Error {}
 const parserOpts = { ignoreAttributes: false, attributeNamePrefix: "@_", parseTagValue: false };
 
 export function sanitizeXml(raw: string): string {
-  return raw.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;");
+  return raw
+    .split(/(<!\[CDATA\[[\s\S]*?\]\]>)/)
+    .map((part) =>
+      part.startsWith("<![CDATA[")
+        ? part
+        : part.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;"),
+    )
+    .join("");
 }
 
 function asArray<T>(v: T | T[] | undefined): T[] {
@@ -78,13 +85,16 @@ export function parseFeed(raw: string): FeedDoc {
       title: text(f.title),
       link: atomLink(f.link),
       description: text(f.subtitle),
-      items: asArray<any>(f.entry).map((e) => ({
-        title: text(e.title),
-        link: atomLink(e.link),
-        guid: text(e.id) || atomLink(e.link),
-        pubDate: text(e.published ?? e.updated) || undefined,
-        description: text(e.summary ?? e.content) || undefined,
-      })),
+      items: asArray<any>(f.entry).map((e) => {
+        const link = atomLink(e.link);
+        return {
+          title: text(e.title),
+          link,
+          guid: text(e.id) || link,
+          pubDate: text(e.published ?? e.updated) || undefined,
+          description: text(e.summary ?? e.content) || undefined,
+        };
+      }),
     };
   }
 
