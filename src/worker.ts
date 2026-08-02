@@ -12,8 +12,6 @@ export default {
     const feedId = await resolveFeedId(url, store);
     if (!feedId) return new Response("Not found", { status: 404 });
 
-    recordRequest(env, feedId, request);
-
     let stored = await store.getFeed(feedId);
     if (!stored) {
       const reg = await store.getRegistry();
@@ -32,6 +30,8 @@ export default {
         }
       }
     }
+
+    ctx.waitUntil(recordRequest(env, feedId, request));
 
     const doc = parseFeed(stored.xml);
     const stale = stored.meta.error_count > 0 ? (stored.meta.last_error ?? "stale") : null;
