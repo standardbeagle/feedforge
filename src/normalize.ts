@@ -128,8 +128,13 @@ export function buildRss(doc: FeedDoc): string {
   return XML_DECL + builder.build({ rss: { "@_version": "2.0", channel } });
 }
 
+export function rfc3339(date: string): string {
+  const ms = Date.parse(date);
+  return Number.isNaN(ms) ? date : new Date(ms).toISOString();
+}
+
 export function buildAtom(doc: FeedDoc): string {
-  const updated = doc.items[0]?.pubDate ?? new Date(0).toISOString();
+  const updated = rfc3339(doc.items[0]?.pubDate ?? new Date(0).toISOString());
   return XML_DECL + builder.build({
     feed: {
       "@_xmlns": "http://www.w3.org/2005/Atom",
@@ -142,7 +147,7 @@ export function buildAtom(doc: FeedDoc): string {
         title: i.title,
         link: { "@_href": i.link },
         id: i.guid,
-        updated: i.pubDate ?? updated,
+        updated: i.pubDate ? rfc3339(i.pubDate) : updated,
         summary: i.description ?? "",
       })),
     },

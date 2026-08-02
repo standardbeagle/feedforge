@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseFeed, buildRss, buildAtom, FeedParseError } from "../src/normalize";
+import { parseFeed, buildRss, buildAtom, rfc3339, FeedParseError } from "../src/normalize";
 import validRss from "./fixtures/valid-rss.xml?raw";
 import validAtom from "./fixtures/valid-atom.xml?raw";
 import bareAmpersand from "./fixtures/bare-ampersand.xml?raw";
@@ -82,9 +82,20 @@ describe("emit round-trip", () => {
     expect(parseFeed(buildRss(doc))).toEqual(doc);
   });
 
+  it("emits RFC 3339 dates in Atom output", () => {
+    const doc = parseFeed(validRss); // has 'Mon, 01 Jun 2026 12:00:00 GMT'
+    const out = buildAtom(doc);
+    expect(out).toContain("2026-06-01T12:00:00.000Z");
+    expect(out).not.toContain("Mon, 01 Jun 2026");
+  });
+
   it("Atom output re-parses to the same doc", () => {
     const doc = parseFeed(validRss);
-    expect(parseFeed(buildAtom(doc))).toEqual(doc);
+    const expected = {
+      ...doc,
+      items: doc.items.map((i) => ({ ...i, pubDate: i.pubDate ? rfc3339(i.pubDate) : i.pubDate })),
+    };
+    expect(parseFeed(buildAtom(doc))).toEqual(expected);
   });
 
   it("RDF input emits valid RSS (round-trip identity)", () => {
