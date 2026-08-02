@@ -134,6 +134,7 @@ export function buildAtom(doc: FeedDoc): string {
     feed: {
       "@_xmlns": "http://www.w3.org/2005/Atom",
       title: doc.title,
+      subtitle: doc.description,
       link: { "@_href": doc.link },
       id: doc.link,
       updated,

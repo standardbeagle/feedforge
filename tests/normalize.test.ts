@@ -77,18 +77,19 @@ describe("emit round-trip", () => {
     expect(parseFeed(buildRss(doc))).toEqual(doc);
   });
 
-  it("Atom input emits valid RSS", () => {
+  it("Atom input emits valid RSS (round-trip identity)", () => {
     const doc = parseFeed(validAtom);
-    const back = parseFeed(buildRss(doc));
-    expect(back.title).toBe("Atom Blog");
-    expect(back.items[0].link).toBe("https://example.org/post");
+    expect(parseFeed(buildRss(doc))).toEqual(doc);
   });
 
   it("Atom output re-parses to the same doc", () => {
     const doc = parseFeed(validRss);
-    const back = parseFeed(buildAtom(doc));
-    expect(back.title).toBe(doc.title);
-    expect(back.items[0].link).toBe(doc.items[0].link);
+    expect(parseFeed(buildAtom(doc))).toEqual(doc);
+  });
+
+  it("RDF input emits valid RSS (round-trip identity)", () => {
+    const doc = parseFeed(validRdf);
+    expect(parseFeed(buildRss(doc))).toEqual(doc);
   });
 
   it("escapes special characters in output", () => {
