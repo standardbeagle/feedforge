@@ -1,7 +1,26 @@
 # feedforge
 
-Open-source FeedBurner clone on Cloudflare's free tier: feed proxying/normalization,
-aggregate analytics, browser-friendly feed pages, and custom-domain (MyBrand) hosting.
+[![CI](https://github.com/standardbeagle/feedforge/actions/workflows/ci.yml/badge.svg)](https://github.com/standardbeagle/feedforge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Cloudflare Workers](https://img.shields.io/badge/cloudflare-workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![Docs](https://img.shields.io/badge/docs-dev.standardbeagle.com-8A2BE2)](https://dev.standardbeagle.com)
+
+An open-source FeedBurner replacement that runs on Cloudflare's free tier. Point it
+at your RSS/Atom/RDF feed and it gives you a stable feed URL served from
+Cloudflare's edge — your origin sees one conditional GET per poll interval instead
+of one request per subscriber. It also does what FeedBurner never did: agents can
+publish short-lived feeds directly through a REST API, so a long-running task can
+notify your feed reader when it finishes.
+
+- **Feed proxying** — parses RSS 2.0, Atom, and RDF; repairs malformed XML; emits valid RSS 2.0 or Atom (`?format=atom`)
+- **Podcasting 2.0** — enclosures, itunes fields, podcast namespace tags, and `content:encoded` survive normalization
+- **Analytics** — subscriber estimates and daily reach in Analytics Engine, with a privacy-preserving daily-rotating reader hash
+- **Short-lived channels** — capability-token REST API for agent/human coordination over RSS
+- **Browser view** — every feed URL doubles as a subscribe-friendly landing page
+- **MyBrand** — map your own domain to a feed
+- **Refresh webhook** — hosts ping, feedforge re-polls immediately
+
+Docs: **https://dev.standardbeagle.com**
 
 ## Setup
 
