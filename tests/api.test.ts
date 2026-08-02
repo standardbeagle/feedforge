@@ -86,4 +86,18 @@ describe("channel API", () => {
     });
     expect(res.status).toBe(413);
   });
+
+  it("rejects oversized request bodies before parsing", async () => {
+    const { json } = await mkChannel();
+    const res = await SELF.fetch(`https://feeds.example.com/api/channels/${json.id}/items`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${json.write_token}`,
+        "content-length": String(200 * 1024),
+      },
+      body: JSON.stringify({ title: "x" }),
+    });
+    expect(res.status).toBe(413);
+  });
 });

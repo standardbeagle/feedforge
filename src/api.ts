@@ -22,6 +22,9 @@ async function authedChannel(env: Env, id: string, request: Request): Promise<Re
 }
 
 export async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method === "POST" && Number(request.headers.get("content-length") ?? 0) > 128 * 1024) {
+    return json({ error: "request body too large" }, 413);
+  }
   const parts = url.pathname.split("/").filter(Boolean); // ["api","channels",<id>?,"items"?]
 
   if (request.method === "POST" && parts.length === 2) {
