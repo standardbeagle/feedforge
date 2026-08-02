@@ -2,11 +2,11 @@ const AGGREGATOR_PATTERNS = [
   /freshrss/i, /miniflux/i, /inoreader/i, /feedly/i, /newsblur/i,
   /tiny tiny rss/i, /tt-rss/i, /feedparser/i, /netnewswire/i,
   /reeder/i, /feedbin/i, /akregator/i, /liferea/i, /rssguard/i,
-  /flipboard/i, /feed validator/i,
+  /flipboard/i, /feed\s?validator/i,
 ];
 
 export function classifyUa(ua: string): { kind: "aggregator" | "browser" | "other"; subscribers: number } {
-  const m = ua.match(/(\d+)\s+subscribers/i);
+  const m = ua.match(/(\d+)\s+subscribers?/i);
   const subscribers = m ? parseInt(m[1], 10) : 0;
   if (AGGREGATOR_PATTERNS.some((p) => p.test(ua)) || m) {
     return { kind: "aggregator", subscribers };

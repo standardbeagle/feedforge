@@ -21,6 +21,11 @@ describe("classifyUa", () => {
   it("classifies unknown agents as other", () => {
     expect(classifyUa("curl/8.0").kind).toBe("other");
   });
+
+  it("detects FeedValidator UA and singular subscriber count", () => {
+    expect(classifyUa("FeedValidator/1.3").kind).toBe("aggregator");
+    expect(classifyUa("SomeReader/2.0 1 subscriber")).toEqual({ kind: "aggregator", subscribers: 1 });
+  });
 });
 
 describe("recordRequest", () => {
