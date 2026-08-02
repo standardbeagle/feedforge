@@ -14,9 +14,11 @@ export async function pollFeed(
   entry: FeedEntry,
   store: FeedStore,
   fetchFn: typeof fetch = fetch,
+  opts: { force?: boolean } = {},
 ): Promise<PollResult> {
   const existing = await store.getFeed(entry.id);
   if (
+    !opts.force &&
     existing &&
     Date.now() - Date.parse(existing.meta.last_fetched) < entry.poll_minutes * 60_000
   ) {
