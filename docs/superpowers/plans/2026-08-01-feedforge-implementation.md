@@ -2278,6 +2278,918 @@ git commit -m "docs: channel API usage for agent coordination"
 
 ---
 
+### Task 15: Podcast parsing (enclosures, itunes, podcast ns, content:encoded)
+
+**Files:**
+- Create: `src/podcast.ts`
+- Modify: `src/normalize.ts`
+- Create: `tests/fixtures/podcast.xml`
+- Test: `tests/podcast.test.ts`
+
+- [ ] **Step 1: Write the fixture**
+
+`tests/fixtures/podcast.xml`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Ship It</title>
+    <link>https://pod.example.com</link>
+    <description>A deploy podcast</description>
+    <itunes:author>Deploy Bot</itunes:author>
+    <itunes:image href="https://pod.example.com/cover.jpg"/>
+    <itunes:summary>Weekly deploys</itunes:summary>
+    <itunes:owner>
+      <itunes:name>The Bot</itunes:name>
+      <itunes:email>bot@pod.example.com</itunes:email>
+    </itunes:owner>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Technology">
+      <itunes:category text="Podcasting"/>
+    </itunes:category>
+    <podcast:guid>9b024349-ccf0-5f69-a609-6b82873eab3a</podcast:guid>
+    <podcast:locked owner="bot@pod.example.com">yes</podcast:locked>
+    <podcast:medium>podcast</podcast:medium>
+    <podcast:person role="host" img="https://pod.example.com/bot.png">Deploy Bot</podcast:person>
+    <podcast:funding url="https://pod.example.com/support">Support the show</podcast:funding>
+    <podcast:location geo="geo:30.2672,97.7431" osm="R113314">Austin, TX</podcast:location>
+    <podcast:value type="lightning" method="keysend" suggested="0.00000005000">
+      <podcast:valueRecipient name="host" address="03ae9f91a0cb8ff43840e3c322c4c61f019d8c1c3cea15a25cfc425ac605e61a4a" type="node" split="100"/>
+    </podcast:value>
+    <item>
+      <title>Episode 3: Blue-green</title>
+      <link>https://pod.example.com/ep3</link>
+      <guid>https://pod.example.com/ep3</guid>
+      <pubDate>Mon, 15 Jun 2026 09:00:00 GMT</pubDate>
+      <description>Blue-green deploys</description>
+      <enclosure url="https://cdn.example.com/ep3.mp3" length="12345678" type="audio/mpeg"/>
+      <itunes:duration>32:14</itunes:duration>
+      <itunes:episode>3</itunes:episode>
+      <itunes:season>1</itunes:season>
+    <itunes:episodeType>full</itunes:episodeType>
+      <podcast:chapters url="https://pod.example.com/ep3-chapters.json"/>
+      <podcast:transcript url="https://pod.example.com/ep3.vtt" type="text/vtt" language="en"/>
+      <content:encoded>&lt;p&gt;Full show notes&lt;/p&gt;</content:encoded>
+    </item>
+  </channel>
+</rss>
+```
+
+- [ ] **Step 2: Write the failing test**
+
+`tests/podcast.test.ts`:
+```ts
+import { describe, it, expect } from "vitest";
+import podcastXml from "./fixtures/podcast.xml?raw";
+import { parseFeed } from "../src/normalize";
+
+const doc = parseFeed(podcastXml);
+
+describe("podcast parsing", () => {
+  it("parses item enclosures", () => {
+    expect(doc.items[0].enclosure).toEqual({
+      url: "https://cdn.example.com/ep3.mp3",
+      length: 12345678,
+      type: "audio/mpeg",
+    });
+  });
+
+  it("parses itunes channel fields", () => {
+    expect(doc.itunes).toMatchObject({
+      author: "Deploy Bot",
+      image: "https://pod.example.com/cover.jpg",
+      summary: "Weekly deploys",
+      ownerName: "The Bot",
+      ownerEmail: "bot@pod.example.com",
+      explicit: "no",
+      type: "episodic",
+    });
+    expect(doc.itunes!.categories).toEqual(["Technology", "Podcasting"]);
+  });
+
+  it("parses podcast channel fields", () => {
+    expect(doc.podcast!.guid).toBe("9b024349-ccf0-5f69-a609-6b82873eab3a");
+    expect(doc.podcast!.locked).toBe("yes");
+    expect(doc.podcast!.lockedOwner).toBe("bot@pod.example.com");
+    expect(doc.podcast!.medium).toBe("podcast");
+    expect(doc.podcast!.persons).toEqual([
+      { name: "Deploy Bot", role: "host", img: "https://pod.example.com/bot.png" },
+    ]);
+    expect(doc.podcast!.funding).toEqual([
+      { url: "https://pod.example.com/support", message: "Support the show" },
+    ]);
+    expect(doc.podcast!.location).toEqual({ name: "Austin, TX", geo: "geo:30.2672,97.7431", osm: "R113314" });
+    expect(doc.podcast!.value).toMatchObject({
+      type: "lightning",
+      method: "keysend",
+      recipients: [{ name: "host", address: "03ae9f91a0cb8ff43840e3c322c4c61f019d8c1c3cea15a25cfc425ac605e61a4a", type: "node", split: 100 }],
+    });
+  });
+
+  it("parses item-level podcast fields", () => {
+    const item = doc.items[0];
+    expect(item.itunes).toEqual({ duration: "32:14", episode: 3, season: 1, episodeType: "full" });
+    expect(item.podcast!.chaptersUrl).toBe("https://pod.example.com/ep3-chapters.json");
+    expect(item.podcast!.transcripts).toEqual([
+      { url: "https://pod.example.com/ep3.vtt", type: "text/vtt", language: "en" },
+    ]);
+    expect(item.content_encoded).toBe("<p>Full show notes</p>");
+  });
+
+  it("normalizes and drops invalid enum values", () => {
+    const d = parseFeed(`<?xml version="1.0"?><rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel>
+      <title>t</title><link>https://x</link><description>d</description>
+      <itunes:explicit>TRUE</itunes:explicit>
+      <podcast:medium>hologram</podcast:medium>
+      <item><title>i</title><link>https://x/1</link><guid>g</guid>
+        <itunes:episodeType>directors-cut</itunes:episodeType>
+        <itunes:episode>not-a-number</itunes:episode>
+      </item></channel></rss>`);
+    expect(d.itunes!.explicit).toBe("yes");
+    expect(d.podcast!.medium).toBeUndefined();
+    expect(d.items[0].itunes!.episodeType).toBeUndefined();
+    expect(d.items[0].itunes!.episode).toBeUndefined();
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `tman run -- npx vitest run tests/podcast.test.ts`
+Expected: FAIL (no enclosure/itunes/podcast fields on FeedDoc)
+
+- [ ] **Step 4: Implement `src/podcast.ts`**
+
+```ts
+export interface Enclosure {
+  url: string;
+  length?: number;
+  type?: string;
+}
+
+export interface ItunesChannel {
+  author?: string;
+  image?: string;
+  summary?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  explicit?: "yes" | "no";
+  type?: "episodic" | "serial";
+  categories?: string[];
+}
+
+export interface ItunesItem {
+  duration?: string;
+  image?: string;
+  explicit?: "yes" | "no";
+  episode?: number;
+  season?: number;
+  episodeType?: "full" | "trailer" | "bonus";
+}
+
+export interface PodcastPerson {
+  name: string;
+  role?: string;
+  group?: string;
+  img?: string;
+  href?: string;
+}
+
+export interface PodcastFunding {
+  url: string;
+  message?: string;
+}
+
+export interface PodcastLocation {
+  name: string;
+  geo?: string;
+  osm?: string;
+}
+
+export interface PodcastValueRecipient {
+  name?: string;
+  address: string;
+  type: string;
+  split: number;
+  fee?: boolean;
+}
+
+export interface PodcastValue {
+  type: string;
+  method: string;
+  suggested?: number;
+  recipients: PodcastValueRecipient[];
+}
+
+export interface PodcastChannelMeta {
+  guid?: string;
+  locked?: "yes" | "no";
+  lockedOwner?: string;
+  medium?: string;
+  persons?: PodcastPerson[];
+  funding?: PodcastFunding[];
+  location?: PodcastLocation;
+  value?: PodcastValue;
+}
+
+export interface PodcastTranscript {
+  url: string;
+  type: string;
+  language?: string;
+  rel?: string;
+}
+
+export interface PodcastItemMeta {
+  chaptersUrl?: string;
+  transcripts?: PodcastTranscript[];
+  persons?: PodcastPerson[];
+  episode?: number;
+  season?: number;
+}
+```
+
+- [ ] **Step 5: Extend `src/normalize.ts`**
+
+Add to imports: `import type { Enclosure, ItunesChannel, ItunesItem, PodcastChannelMeta, PodcastItemMeta, PodcastPerson } from "./podcast";`
+
+Extend FeedItem and FeedDoc:
+```ts
+export interface FeedItem {
+  title: string;
+  link: string;
+  guid: string;
+  pubDate?: string;
+  description?: string;
+  enclosure?: Enclosure;
+  itunes?: ItunesItem;
+  podcast?: PodcastItemMeta;
+  content_encoded?: string;
+}
+
+export interface FeedDoc {
+  title: string;
+  link: string;
+  description: string;
+  items: FeedItem[];
+  itunes?: ItunesChannel;
+  podcast?: PodcastChannelMeta;
+}
+```
+
+Add parse helpers (private to normalize.ts):
+```ts
+function str(v: unknown): string | undefined {
+  const t = text(v);
+  return t || undefined;
+}
+
+function attr(v: any, name: string): string | undefined {
+  const t = text(v?.[`@_${name}`]);
+  return t || undefined;
+}
+
+function yesNo(v: unknown): "yes" | "no" | undefined {
+  const t = text(v).toLowerCase();
+  if (t === "yes" || t === "true") return "yes";
+  if (t === "no" || t === "false") return "no";
+  return undefined;
+}
+
+function intOr(v: unknown): number | undefined {
+  const n = parseInt(text(v), 10);
+  return Number.isNaN(n) ? undefined : n;
+}
+
+function compact<T extends object>(o: T): T | undefined {
+  return Object.values(o).some((v) => v !== undefined) ? o : undefined;
+}
+
+const EPISODE_TYPES = new Set(["full", "trailer", "bonus"]);
+const PODCAST_MEDIUMS = new Set([
+  "podcast", "music", "video", "film", "audiobook",
+  "newsletter", "blog", "publisher", "course", "mixed", "list",
+]);
+
+function collectCategories(v: unknown): string[] {
+  const out: string[] = [];
+  for (const c of asArray<any>(v)) {
+    const t = attr(c, "text") ?? str(c);
+    if (t) out.push(t);
+    out.push(...collectCategories(c?.["itunes:category"]));
+  }
+  return out;
+}
+
+function parsePersons(v: unknown): PodcastPerson[] | undefined {
+  const persons = asArray<any>(v)
+    .map((p) => ({
+      name: text(p),
+      role: attr(p, "role"),
+      group: attr(p, "group"),
+      img: attr(p, "img"),
+      href: attr(p, "href"),
+    }))
+    .filter((p) => p.name);
+  return persons.length ? persons : undefined;
+}
+
+function parseItunesChannel(c: any): ItunesChannel | undefined {
+  const categories = collectCategories(c["itunes:category"]);
+  return compact<ItunesChannel>({
+    author: str(c["itunes:author"]),
+    image: attr(c["itunes:image"], "href"),
+    summary: str(c["itunes:summary"]),
+    ownerName: str(c["itunes:owner"]?.["itunes:name"]),
+    ownerEmail: str(c["itunes:owner"]?.["itunes:email"]),
+    explicit: yesNo(c["itunes:explicit"]),
+    type: (["episodic", "serial"].includes(text(c["itunes:type"]))
+      ? text(c["itunes:type"])
+      : undefined) as ItunesChannel["type"],
+    categories: categories.length ? categories : undefined,
+  });
+}
+
+function parseItunesItem(i: any): ItunesItem | undefined {
+  const episodeType = text(i["itunes:episodeType"]);
+  return compact<ItunesItem>({
+    duration: str(i["itunes:duration"]),
+    image: attr(i["itunes:image"], "href"),
+    explicit: yesNo(i["itunes:explicit"]),
+    episode: intOr(i["itunes:episode"]),
+    season: intOr(i["itunes:season"]),
+    episodeType: (EPISODE_TYPES.has(episodeType) ? episodeType : undefined) as ItunesItem["episodeType"],
+  });
+}
+
+function parsePodcastChannel(c: any): PodcastChannelMeta | undefined {
+  const funding = asArray<any>(c["podcast:funding"])
+    .map((f) => ({ url: attr(f, "url") ?? "", message: str(f) }))
+    .filter((f) => f.url);
+  const loc = c["podcast:location"];
+  const medium = text(c["podcast:medium"]);
+  const valueEl = c["podcast:value"];
+  const recipients = asArray<any>(valueEl?.["podcast:valueRecipient"])
+    .map((r) => ({
+      name: attr(r, "name"),
+      address: attr(r, "address") ?? "",
+      type: attr(r, "type") ?? "",
+      split: intOr(attr(r, "split")) ?? 0,
+      fee: attr(r, "fee") === "true" ? true : undefined,
+    }))
+    .filter((r) => r.address);
+  return compact<PodcastChannelMeta>({
+    guid: str(c["podcast:guid"]),
+    locked: yesNo(c["podcast:locked"]),
+    lockedOwner: attr(c["podcast:locked"], "owner"),
+    medium: PODCAST_MEDIUMS.has(medium) ? medium : undefined,
+    persons: parsePersons(c["podcast:person"]),
+    funding: funding.length ? funding : undefined,
+    location: loc
+      ? { name: text(loc), geo: attr(loc, "geo"), osm: attr(loc, "osm") }
+      : undefined,
+    value:
+      valueEl && attr(valueEl, "type") && attr(valueEl, "method")
+        ? {
+            type: attr(valueEl, "type")!,
+            method: attr(valueEl, "method")!,
+            suggested: Number(attr(valueEl, "suggested")) || undefined,
+            recipients,
+          }
+        : undefined,
+  });
+}
+
+function parsePodcastItem(i: any): PodcastItemMeta | undefined {
+  const transcripts = asArray<any>(i["podcast:transcript"])
+    .map((t) => ({
+      url: attr(t, "url") ?? "",
+      type: attr(t, "type") ?? "",
+      language: attr(t, "language"),
+      rel: attr(t, "rel"),
+    }))
+    .filter((t) => t.url);
+  return compact<PodcastItemMeta>({
+    chaptersUrl: attr(i["podcast:chapters"], "url"),
+    transcripts: transcripts.length ? transcripts : undefined,
+    persons: parsePersons(i["podcast:person"]),
+    episode: intOr(i["podcast:episode"]),
+    season: intOr(i["podcast:season"]),
+  });
+}
+
+function parseEnclosure(i: any): Enclosure | undefined {
+  const e = i.enclosure;
+  if (!e) return undefined;
+  const url = attr(e, "url");
+  if (!url) return undefined;
+  return { url, length: intOr(attr(e, "length")), type: attr(e, "type") };
+}
+```
+
+In `parseFeed`'s RSS branch, extend the return:
+```ts
+    return {
+      title: text(channel.title),
+      link: text(channel.link),
+      description: text(channel.description),
+      itunes: parseItunesChannel(channel),
+      podcast: parsePodcastChannel(channel),
+      items: rawItems.map((i) => ({
+        title: text(i.title),
+        link: text(i.link),
+        guid: text(i.guid ?? i.link),
+        pubDate: text(i.pubDate ?? i["dc:date"]) || undefined,
+        description: text(i.description) || undefined,
+        enclosure: parseEnclosure(i),
+        itunes: parseItunesItem(i),
+        podcast: parsePodcastItem(i),
+        content_encoded: str(i["content:encoded"]),
+      })),
+    };
+```
+
+- [ ] **Step 6: Run tests**
+
+Run: `tman run -- npx vitest run tests/podcast.test.ts` (5/5 pass), then full suite — all existing tests must stay green (round-trip identity unaffected: fixtures without podcast fields yield undefined fields). `tman run -- npx tsc --noEmit` clean.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/podcast.ts src/normalize.ts tests/podcast.test.ts tests/fixtures/podcast.xml
+git commit -m "feat: parse podcast metadata (enclosures, itunes, podcast ns)"
+```
+
+---
+
+### Task 16: Podcast emit (RSS namespaces + Atom enclosure links)
+
+**Files:**
+- Modify: `src/normalize.ts`
+- Modify: `tests/podcast.test.ts`
+
+- [ ] **Step 1: Write failing round-trip tests**
+
+Append to `tests/podcast.test.ts`:
+```ts
+import { buildRss, buildAtom } from "../src/normalize";
+
+describe("podcast emit", () => {
+  it("RSS round-trip preserves podcast metadata", () => {
+    const back = parseFeed(buildRss(doc));
+    expect(back.items[0].enclosure).toEqual(doc.items[0].enclosure);
+    expect(back.itunes).toEqual(doc.itunes);
+    expect(back.podcast).toEqual(doc.podcast);
+    expect(back.items[0].itunes).toEqual(doc.items[0].itunes);
+    expect(back.items[0].podcast).toEqual(doc.items[0].podcast);
+    expect(back.items[0].content_encoded).toBe(doc.items[0].content_encoded);
+  });
+
+  it("declares namespaces only when used", () => {
+    const withPodcast = buildRss(doc);
+    expect(withPodcast).toContain('xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"');
+    expect(withPodcast).toContain('xmlns:podcast="https://podcastindex.org/namespace/1.0"');
+    expect(withPodcast).toContain('xmlns:content="http://purl.org/rss/1.0/modules/content/"');
+    const plain = buildRss(parseFeed(`<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>t</title><link>https://x</link><description>d</description>
+      <item><title>i</title><link>https://x/1</link><guid>g</guid></item></channel></rss>`));
+    expect(plain).not.toContain("xmlns:itunes");
+    expect(plain).not.toContain("xmlns:podcast");
+    expect(plain).not.toContain("xmlns:content");
+  });
+
+  it("Atom output includes enclosure links and round-trips them", () => {
+    const atom = buildAtom(doc);
+    expect(atom).toContain('rel="enclosure"');
+    expect(atom).toContain('href="https://cdn.example.com/ep3.mp3"');
+    const back = parseFeed(atom);
+    expect(back.items[0].enclosure).toEqual({
+      url: "https://cdn.example.com/ep3.mp3",
+      length: 12345678,
+      type: "audio/mpeg",
+    });
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `tman run -- npx vitest run tests/podcast.test.ts`
+Expected: FAIL (emit drops podcast fields; Atom has no enclosure links)
+
+- [ ] **Step 3: Extend `buildRss` in `src/normalize.ts`**
+
+Add emit helpers:
+```ts
+function entry(o: Record<string, unknown>, key: string, value: unknown): void {
+  if (value !== undefined) o[key] = value;
+}
+
+function itunesChannelXml(it: ItunesChannel): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  entry(o, "itunes:author", it.author);
+  if (it.image) o["itunes:image"] = { "@_href": it.image };
+  entry(o, "itunes:summary", it.summary);
+  if (it.ownerName || it.ownerEmail) {
+    const owner: Record<string, unknown> = {};
+    entry(owner, "itunes:name", it.ownerName);
+    entry(owner, "itunes:email", it.ownerEmail);
+    o["itunes:owner"] = owner;
+  }
+  entry(o, "itunes:explicit", it.explicit);
+  entry(o, "itunes:type", it.type);
+  if (it.categories) {
+    o["itunes:category"] = it.categories.map((c) => ({ "@_text": c }));
+  }
+  return o;
+}
+
+function itunesItemXml(it: ItunesItem): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  entry(o, "itunes:duration", it.duration);
+  if (it.image) o["itunes:image"] = { "@_href": it.image };
+  entry(o, "itunes:explicit", it.explicit);
+  entry(o, "itunes:episode", it.episode);
+  entry(o, "itunes:season", it.season);
+  entry(o, "itunes:episodeType", it.episodeType);
+  return o;
+}
+
+function personXml(p: PodcastPerson): Record<string, unknown> {
+  const o: Record<string, unknown> = { "#text": p.name };
+  entry(o, "@_role", p.role);
+  entry(o, "@_group", p.group);
+  entry(o, "@_img", p.img);
+  entry(o, "@_href", p.href);
+  return o;
+}
+
+function podcastChannelXml(p: PodcastChannelMeta): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  entry(o, "podcast:guid", p.guid);
+  if (p.locked) {
+    const locked: Record<string, unknown> = { "#text": p.locked };
+    entry(locked, "@_owner", p.lockedOwner);
+    o["podcast:locked"] = locked;
+  }
+  entry(o, "podcast:medium", p.medium);
+  if (p.persons) o["podcast:person"] = p.persons.map(personXml);
+  if (p.funding) {
+    o["podcast:funding"] = p.funding.map((f) => {
+      const fo: Record<string, unknown> = { "@_url": f.url };
+      entry(fo, "#text", f.message);
+      return fo;
+    });
+  }
+  if (p.location) {
+    const loc: Record<string, unknown> = { "#text": p.location.name };
+    entry(loc, "@_geo", p.location.geo);
+    entry(loc, "@_osm", p.location.osm);
+    o["podcast:location"] = loc;
+  }
+  if (p.value) {
+    const v: Record<string, unknown> = {
+      "@_type": p.value.type,
+      "@_method": p.value.method,
+    };
+    entry(v, "@_suggested", p.value.suggested);
+    v["podcast:valueRecipient"] = p.value.recipients.map((r) => {
+      const ro: Record<string, unknown> = {
+        "@_address": r.address,
+        "@_type": r.type,
+        "@_split": r.split,
+      };
+      entry(ro, "@_name", r.name);
+      entry(ro, "@_fee", r.fee);
+      return ro;
+    });
+    o["podcast:value"] = v;
+  }
+  return o;
+}
+
+function podcastItemXml(p: PodcastItemMeta): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  if (p.chaptersUrl) o["podcast:chapters"] = { "@_url": p.chaptersUrl };
+  if (p.transcripts) {
+    o["podcast:transcript"] = p.transcripts.map((t) => {
+      const to: Record<string, unknown> = { "@_url": t.url, "@_type": t.type };
+      entry(to, "@_language", t.language);
+      entry(to, "@_rel", t.rel);
+      return to;
+    });
+  }
+  if (p.persons) o["podcast:person"] = p.persons.map(personXml);
+  entry(o, "podcast:episode", p.episode);
+  entry(o, "podcast:season", p.season);
+  return o;
+}
+```
+
+Rework `buildRss`:
+```ts
+export function buildRss(doc: FeedDoc): string {
+  const channel: Record<string, unknown> = {
+    title: doc.title,
+    link: doc.link,
+    description: doc.description,
+    ...(doc.itunes ? itunesChannelXml(doc.itunes) : {}),
+    ...(doc.podcast ? podcastChannelXml(doc.podcast) : {}),
+    item: doc.items.map((i) => {
+      const item: Record<string, unknown> = {
+        title: i.title,
+        link: i.link,
+        guid: i.guid,
+      };
+      if (i.pubDate) item.pubDate = i.pubDate;
+      if (i.description) item.description = i.description;
+      if (i.enclosure) {
+        const enc: Record<string, unknown> = { "@_url": i.enclosure.url };
+        entry(enc, "@_length", i.enclosure.length);
+        entry(enc, "@_type", i.enclosure.type);
+        item.enclosure = enc;
+      }
+      if (i.content_encoded !== undefined) item["content:encoded"] = i.content_encoded;
+      Object.assign(item, i.itunes ? itunesItemXml(i.itunes) : {}, i.podcast ? podcastItemXml(i.podcast) : {});
+      return item;
+    }),
+  };
+  const rss: Record<string, unknown> = { "@_version": "2.0" };
+  if (doc.itunes || doc.items.some((i) => i.itunes)) {
+    rss["@_xmlns:itunes"] = "http://www.itunes.com/dtds/podcast-1.0.dtd";
+  }
+  if (doc.podcast || doc.items.some((i) => i.podcast)) {
+    rss["@_xmlns:podcast"] = "https://podcastindex.org/namespace/1.0";
+  }
+  if (doc.items.some((i) => i.content_encoded !== undefined)) {
+    rss["@_xmlns:content"] = "http://purl.org/rss/1.0/modules/content/";
+  }
+  rss.channel = channel;
+  return XML_DECL + builder.build({ rss });
+}
+```
+
+Add `rfc3339` note: none needed here (already exists).
+
+- [ ] **Step 4: Atom enclosure support**
+
+In `parseFeed`'s Atom branch, extract enclosures from entry links:
+```ts
+function atomEnclosure(v: unknown): Enclosure | undefined {
+  for (const l of asArray(v as object | object[])) {
+    const o = l as Record<string, unknown>;
+    if (o["@_rel"] === "enclosure" && o["@_href"]) {
+      const url = String(o["@_href"]);
+      const length = intOr(String(o["@_length"] ?? ""));
+      const type = str(o["@_type"]);
+      return { url, length, type };
+    }
+  }
+  return undefined;
+}
+```
+and add `enclosure: atomEnclosure(e.link),` to the Atom item mapping.
+
+In `buildAtom`, change entry link to an array when an enclosure exists:
+```ts
+      entry: doc.items.map((i) => {
+        const links: Record<string, unknown>[] = [{ "@_href": i.link }];
+        if (i.enclosure) {
+          const enc: Record<string, unknown> = {
+            "@_rel": "enclosure",
+            "@_href": i.enclosure.url,
+          };
+          entry(enc, "@_type", i.enclosure.type);
+          entry(enc, "@_length", i.enclosure.length);
+          links.push(enc);
+        }
+        return {
+          title: i.title,
+          link: links,
+          id: i.guid,
+          updated: rfc3339(i.pubDate ?? updated),
+          summary: i.description ?? "",
+        };
+      }),
+```
+Also update the feed-level `link` to remain `{ "@_href": doc.link }` (unchanged). Verify the existing Atom round-trip tests still pass — `atomLink` already picks the alternate/first link, so entry.link arrays are handled.
+
+- [ ] **Step 5: Run full suite**
+
+Run: `tman run -- npx vitest run` — all suites green (podcast file now 8 tests). `tman run -- npx tsc --noEmit` clean. NOTE: the "Atom output re-parses to the same doc" test from Task 3 may need its expected-value handling checked now that entry.link can be an array — atomLink must still return the alternate href; fix normalize, not assertions.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/normalize.ts tests/podcast.test.ts
+git commit -m "feat: emit podcast metadata (RSS namespaces, Atom enclosure links)"
+```
+
+---
+
+### Task 17: Refresh webhook (`POST /api/feeds/<id>/refresh`)
+
+**Files:**
+- Modify: `src/poller.ts` (force option)
+- Modify: `src/api.ts` (route + auth)
+- Modify: `src/env.d.ts` (REFRESH_TOKEN)
+- Modify: `vitest.config.ts` (test binding)
+- Test: `tests/refresh.test.ts`
+
+- [ ] **Step 1: Add force option to pollFeed**
+
+In `src/poller.ts`, change the signature and skip logic:
+```ts
+export async function pollFeed(
+  entry: FeedEntry,
+  store: FeedStore,
+  fetchFn: typeof fetch = fetch,
+  opts: { force?: boolean } = {},
+): Promise<PollResult> {
+  const existing = await store.getFeed(entry.id);
+  if (
+    !opts.force &&
+    existing &&
+    Date.now() - Date.parse(existing.meta.last_fetched) < entry.poll_minutes * 60_000
+  ) {
+    return { id: entry.id, status: "skipped" };
+  }
+```
+(Everything else unchanged.)
+
+- [ ] **Step 2: Write the failing test**
+
+`vitest.config.ts` — add a test-only binding so `env.REFRESH_TOKEN` exists in tests:
+```ts
+export default defineWorkersConfig({
+  test: {
+    poolOptions: {
+      workers: {
+        wrangler: { configPath: "./wrangler.toml" },
+        miniflare: {
+          bindings: { REFRESH_TOKEN: "test-refresh-secret" },
+        },
+      },
+    },
+  },
+});
+```
+
+`tests/refresh.test.ts`:
+```ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { env, SELF, fetchMock } from "cloudflare:test";
+import rss from "./fixtures/valid-rss.xml?raw";
+import { KVFeedStore } from "../src/registry";
+
+beforeAll(async () => {
+  fetchMock.activate();
+  fetchMock.disableNetConnect();
+  const store = new KVFeedStore(env.FEEDS);
+  await store.putRegistry({
+    feeds: [{ id: "blog", origin: "https://origin.test/rss", poll_minutes: 30, created_at: "2026-08-01T00:00:00Z" }],
+    domains: {},
+  });
+});
+
+const call = (id: string, token?: string) =>
+  SELF.fetch(`https://feeds.example.com/api/feeds/${id}/refresh`, {
+    method: "POST",
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+
+describe("refresh webhook", () => {
+  it("forces a poll and returns the result", async () => {
+    fetchMock.get("https://origin.test").intercept({ path: "/rss" }).reply(200, rss);
+    const res = await call("blog", "test-refresh-secret");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json).toMatchObject({ id: "blog", status: "ok" });
+    const stored = await new KVFeedStore(env.FEEDS).getFeed("blog");
+    expect(stored!.meta.title).toBe("Example Blog");
+  });
+
+  it("bypasses the poll-interval skip", async () => {
+    fetchMock.get("https://origin.test").intercept({ path: "/rss" }).reply(200, rss);
+    const first = await call("blog", "test-refresh-secret");
+    const second = await call("blog", "test-refresh-secret");
+    expect((await second.json() as any).status).toBe("ok"); // not "skipped"
+  });
+
+  it("requires the shared secret", async () => {
+    expect((await call("blog")).status).toBe(401);
+    expect((await call("blog", "wrong")).status).toBe(403);
+  });
+
+  it("404s unknown feeds", async () => {
+    expect((await call("ghost", "test-refresh-secret")).status).toBe(404);
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `tman run -- npx vitest run tests/refresh.test.ts`
+Expected: FAIL (route missing)
+
+- [ ] **Step 4: Implement the route**
+
+In `src/env.d.ts`:
+```ts
+interface Env {
+  FEEDS: KVNamespace;
+  ANALYTICS: AnalyticsEngineDataset;
+  REFRESH_TOKEN?: string;
+}
+```
+
+In `src/api.ts`, add to imports: `import { KVFeedStore } from "./registry"; import { pollFeed } from "./poller";`
+
+Add inside `handleApi`, before the channels handling, and tighten the existing loose routing (parts[1] must be "channels" for channel routes):
+```ts
+  if (parts[1] === "feeds" && parts[3] === "refresh" && request.method === "POST") {
+    const secret = env.REFRESH_TOKEN;
+    if (!secret) return json({ error: "not found" }, 404);
+    const token = bearer(request);
+    if (!token) return json({ error: "missing bearer token" }, 401);
+    if (token !== secret) return json({ error: "invalid token" }, 403);
+    const store = new KVFeedStore(env.FEEDS);
+    const { feeds } = await store.getRegistry();
+    const entry = feeds.find((f) => f.id === parts[2]);
+    if (!entry) return json({ error: "feed not found" }, 404);
+    const result = await pollFeed(entry, store, fetch, { force: true });
+    return json(result, result.status === "error" ? 502 : 200);
+  }
+
+  if (parts[1] !== "channels") return json({ error: "not found" }, 404);
+```
+(Place the `parts[1] !== "channels"` guard so all existing channel routes are unreachable via other slugs — this also closes the loose-routing minor from the final review. Ensure existing api tests still pass.)
+
+- [ ] **Step 5: Run full suite**
+
+Run: `tman run -- npx vitest run` — all green (refresh 4 new tests). `tman run -- npx tsc --noEmit` clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/poller.ts src/api.ts src/env.d.ts vitest.config.ts tests/refresh.test.ts
+git commit -m "feat: refresh webhook with shared-secret auth"
+```
+
+---
+
+### Task 18: Podcast + webhook docs
+
+**Files:**
+- Modify: `README.md`
+
+- [ ] **Step 1: Add sections to README.md**
+
+After the `## Using feeds` section, insert:
+
+```markdown
+## Refresh webhook
+
+Hosts can trigger an immediate refresh instead of waiting for the cron interval:
+
+    npx wrangler secret put REFRESH_TOKEN   # one-time setup
+
+    curl -X POST https://<your-worker-domain>/api/feeds/myblog/refresh \
+      -H 'authorization: Bearer <REFRESH_TOKEN>'
+
+    # => {"id":"myblog","status":"ok"}
+
+The refresh bypasses the poll interval but still sends conditional headers, so a
+no-change ping costs one 304. If `REFRESH_TOKEN` is unset the route is disabled.
+
+## Podcasts
+
+Podcast feeds are fully supported: enclosures, itunes channel/item fields
+(author, image, categories, explicit, duration, episode/season/episodeType,
+owner, type), Podcasting 2.0 tags (guid, locked, medium, person, funding,
+location, value/valueRecipient, chapters, transcript), and content:encoded all
+survive normalization. Invalid enum values (explicit, episodeType, medium) are
+dropped on parse. Audio bytes are never proxied — enclosure URLs pass through
+to the listener's client.
+```
+
+- [ ] **Step 2: Verify doc claims against code, run full verification**
+
+Run: `tman run -- npx tsc --noEmit && tman run -- npx vitest run`
+Expected: clean, all tests pass
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: refresh webhook and podcast support"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** proxying/normalization (T2–3), cron-poll + store (T5), aggregate analytics (T7), browser view (T8), MyBrand (T4 resolveHost, T6 router, T9 map-domain), CLI-only admin (T9), error handling/last-good (T5, T6 X-Feed-Stale), tests (every task + T10 e2e), deployment (T1 wrangler.toml, T10 README), channels (T11 store, T12 API, T13 serving+sweep, T14 docs). RSS-to-email, click tracking, multi-user — explicitly deferred per spec.

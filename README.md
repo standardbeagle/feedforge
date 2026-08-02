@@ -23,6 +23,30 @@ aggregate analytics, browser-friendly feed pages, and custom-domain (MyBrand) ho
 - Feed URL: `https://<your-worker-domain>/myblog` (Atom: append `?format=atom`)
 - Open the URL in a browser for a subscribe-friendly landing page.
 
+## Refresh webhook
+
+Hosts can trigger an immediate refresh instead of waiting for the cron interval:
+
+    npx wrangler secret put REFRESH_TOKEN   # one-time setup
+
+    curl -X POST https://<your-worker-domain>/api/feeds/myblog/refresh \
+      -H 'authorization: Bearer <REFRESH_TOKEN>'
+
+    # => {"id":"myblog","status":"ok"}
+
+The refresh bypasses the poll interval but still sends conditional headers, so a
+no-change ping costs one 304. If `REFRESH_TOKEN` is unset the route is disabled.
+
+## Podcasts
+
+Podcast feeds are fully supported: enclosures, itunes channel/item fields
+(author, image, categories, explicit, duration, episode/season/episodeType,
+owner, type), Podcasting 2.0 tags (guid, locked, medium, person, funding,
+location, value/valueRecipient, chapters, transcript), and content:encoded all
+survive normalization. Invalid enum values (explicit, episodeType, medium) are
+dropped on parse. Audio bytes are never proxied — enclosure URLs pass through
+to the listener's client.
+
 ## Stats
 
 Datapoints land in the `feedforge` Analytics Engine dataset:

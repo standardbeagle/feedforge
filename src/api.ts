@@ -1,4 +1,6 @@
 import { createChannel, getChannel, appendItem, deleteChannel, verifyToken } from "./channels";
+import { KVFeedStore } from "./registry";
+import { pollFeed } from "./poller";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -26,6 +28,25 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
     return json({ error: "request body too large" }, 413);
   }
   const parts = url.pathname.split("/").filter(Boolean); // ["api","channels",<id>?,"items"?]
+
+  if (parts[1] === "feeds" && parts[3] === "refresh" && parts.length === 4 && request.method === "POST") {
+    const secret = env.REFRESH_TOKEN;
+    if (!secret) return json({ error: "not found" }, 404);
+    const token = bearer(request);
+    if (!token) return json({ error: "missing bearer token" }, 401);
+    if (token !== secret) return json({ error: "invalid token" }, 403);
+    const store = new KVFeedStore(env.FEEDS);
+    const { feeds } = await store.getRegistry();
+    const entry = feeds.find((f) => f.id === parts[2]);
+    if (!entry) return json({ error: "feed not found" }, 404);
+    const result = await pollFeed(entry, store, fetch, { force: true });
+    return json(
+      { id: result.id, status: result.status, message: result.message },
+      result.status === "error" ? 502 : 200,
+    );
+  }
+
+  if (parts[1] !== "channels") return json({ error: "not found" }, 404);
 
   if (request.method === "POST" && parts.length === 2) {
     let body: { title?: string; description?: string; ttl_hours?: number };

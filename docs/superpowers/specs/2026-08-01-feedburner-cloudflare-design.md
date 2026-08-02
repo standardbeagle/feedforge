@@ -126,6 +126,24 @@ Channels are feeds published *to* feedforge rather than proxied from an origin �
 - **Serving**: fetch handler falls through from registry feeds to channels; channel XML rendered on the fly with the same `buildRss` pipeline — analytics, browser view, and MyBrand path all apply unchanged.
 - **Expiry**: TTL default 7 days, min 1 hour, max 30 days. Lazy 404 on expired read/write; cron sweep lists `channel:` prefix and deletes expired entries.
 
+## Refresh webhook
+
+Hosts can notify feedforge of new content instead of waiting for the cron interval (FeedBurner PING equivalent):
+
+- `POST /api/feeds/<id>/refresh` → forces an immediate `pollFeed` (bypasses the poll-interval skip; conditional GET still applies, so a no-change ping costs one 304).
+- **Auth**: shared secret via `REFRESH_TOKEN` (wrangler secret). `Authorization: Bearer <token>` required; if the secret is unset the route is disabled (404). 401 missing token, 403 wrong token.
+- Response: `200 {id, status, message?}` (status = pollFeed result), 404 unknown feed.
+
+## Podcast support (Podcasting 2.0 model)
+
+The normalizer models podcast metadata as typed fields instead of dropping it:
+
+- **Enclosures**: `<enclosure url length type>` parsed and re-emitted; Atom output maps them to `<link rel="enclosure">`. Audio bytes are never proxied — enclosure URLs pass through absolute.
+- **itunes:** channel: author, image, summary, owner name/email, explicit (normalized yes/no), type (episodic/serial), categories (nested flattened). Item: duration, image, explicit, episode, season, episodeType (full/trailer/bonus).
+- **podcast:** channel: guid, locked (+owner), medium (whitelisted), person[], funding[], location (name/geo/osm), value (type/method/suggested + recipients). Item: chapters url, transcript[], person[], episode, season.
+- **content:encoded** passed through at item level.
+- Enum fields validated on parse (explicit, episodeType, medium); invalid values dropped. `xmlns:itunes` / `xmlns:podcast` / `xmlns:content` declared on RSS output only when used.
+
 ## Future extension points (designed-for, not built)
 
 - Feed registry behind a `FeedStore` interface → D1 implementation for multi-tenant
