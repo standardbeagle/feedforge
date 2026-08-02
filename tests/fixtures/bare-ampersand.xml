@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Tom &amp; Jerry Blog</title>
+    <link>https://example.net?a=1&b=2</link>
+    <description>Mixed & broken</description>
+    <item>
+      <title>Post &amp; More</title>
+      <link>https://example.net/p?x=1&y=2</link>
+      <guid>g1</guid>
+    </item>
+  </channel>
+</rss>
