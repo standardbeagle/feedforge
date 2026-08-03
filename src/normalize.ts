@@ -35,7 +35,7 @@ const parserOpts = {
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
   parseTagValue: false,
-  processEntities: { maxTotalExpansions: 20_000 },
+  processEntities: { maxTotalExpansions: 500_000 },
 };
 
 export function sanitizeXml(raw: string): string {
