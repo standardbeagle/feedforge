@@ -7,8 +7,12 @@ crons = ["*/30 * * * *"]
 
 [[kv_namespaces]]
 binding = "FEEDS"
-# TODO: replace with real namespace id from 'wrangler kv namespace create FEEDS' before deploy
-id = "00000000000000000000000000000000"
+id = "71db651c686a477cbec697b68b824965"
+
+routes = [
+  { pattern = "feeds.sbdev.io", custom_domain = true, zone_name = "sbdev.io" },
+  { pattern = "feeds.curvatureofthemind.com", custom_domain = true, zone_name = "curvatureofthemind.com" },
+]
 
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
