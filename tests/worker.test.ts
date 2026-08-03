@@ -98,3 +98,52 @@ describe("fetch handler", () => {
     expect(res.headers.get("x-feed-stale")).toBe("true");
   });
 });
+
+describe("root landing page", () => {
+  it("serves the product landing page at the root of an unmapped host", async () => {
+    const res = await SELF.fetch("https://feeds.example.com/", {
+      headers: { accept: "text/html", "user-agent": "Mozilla/5.0 Chrome/126" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("feedforge");
+    expect(html).toContain("application/ld+json");
+    expect(html).toContain("rel=\"canonical\"");
+  });
+
+  it("lists registered feeds with their URLs", async () => {
+    const store = new KVFeedStore(env.FEEDS);
+    await store.putRegistry({
+      feeds: [{ id: "blog", origin: "https://origin.test/rss", poll_minutes: 30, created_at: "2026-08-01T00:00:00Z" }],
+      domains: {},
+    });
+    await store.putFeed("blog", {
+      xml: "<rss/>",
+      meta: { last_fetched: "2026-08-01T00:00:00Z", title: "Example Blog", item_count: 1, error_count: 0 },
+    });
+    const res = await SELF.fetch("https://feeds.example.com/", {
+      headers: { accept: "text/html", "user-agent": "Mozilla/5.0 Chrome/126" },
+    });
+    const html = await res.text();
+    expect(html).toContain("Example Blog");
+    expect(html).toContain("https://feeds.example.com/blog");
+  });
+
+  it("escapes feed titles in the landing page", async () => {
+    const store = new KVFeedStore(env.FEEDS);
+    await store.putRegistry({
+      feeds: [{ id: "evil", origin: "https://origin.test/rss", poll_minutes: 30, created_at: "2026-08-01T00:00:00Z" }],
+      domains: {},
+    });
+    await store.putFeed("evil", {
+      xml: "<rss/>",
+      meta: { last_fetched: "2026-08-01T00:00:00Z", title: "<script>alert(1)</script>", item_count: 0, error_count: 0 },
+    });
+    const res = await SELF.fetch("https://feeds.example.com/", {
+      headers: { accept: "text/html", "user-agent": "Mozilla/5.0 Chrome/126" },
+    });
+    const html = await res.text();
+    expect(html).not.toContain("<script>alert(1)</script>");
+  });
+});

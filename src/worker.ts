@@ -3,7 +3,7 @@ import { pollAll, pollFeed } from "./poller";
 import { resolveFeedId } from "./router";
 import { parseFeed, buildAtom, buildRss, type FeedDoc } from "./normalize";
 import { classifyUa, recordRequest } from "./analytics";
-import { renderFeedPage } from "./view";
+import { renderFeedPage, renderLandingPage } from "./view";
 import { handleApi } from "./api";
 import { getChannel, sweepExpired } from "./channels";
 
@@ -43,7 +43,22 @@ export default {
         }
       } else {
         const channelId = feedId ?? url.pathname.split("/").filter(Boolean)[0] ?? null;
-        const channel = channelId ? await getChannel(env.FEEDS, channelId) : null;
+        if (!channelId) {
+          if (request.method === "GET") {
+            const reg = await store.getRegistry();
+            const feeds = await Promise.all(
+              reg.feeds.map(async (f) => ({
+                id: f.id,
+                title: (await store.getFeed(f.id))?.meta.title ?? f.id,
+              })),
+            );
+            return new Response(renderLandingPage(url.host, feeds), {
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+          return new Response("Not found", { status: 404 });
+        }
+        const channel = await getChannel(env.FEEDS, channelId);
         if (!channel) return new Response("Feed not found", { status: 404 });
         doc = {
           title: channel.title,
