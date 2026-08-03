@@ -31,7 +31,12 @@ export interface FeedDoc {
 
 export class FeedParseError extends Error {}
 
-const parserOpts = { ignoreAttributes: false, attributeNamePrefix: "@_", parseTagValue: false };
+const parserOpts = {
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  parseTagValue: false,
+  processEntities: { maxTotalExpansions: 20_000 },
+};
 
 export function sanitizeXml(raw: string): string {
   return raw

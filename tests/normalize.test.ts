@@ -110,3 +110,15 @@ describe("emit round-trip", () => {
     expect(out).not.toMatch(/&(?!amp|lt|gt|quot|apos|#)/);
   });
 });
+
+describe("entity-heavy documents", () => {
+  it("parses feeds with more than 1000 entity references", () => {
+    const items = Array.from(
+      { length: 40 },
+      (_, i) => `<item><title>Post ${i} &amp; more</title><link>https://x/${i}</link><guid>g${i}</guid><description>${"&amp; ".repeat(40)}</description></item>`,
+    ).join("");
+    const doc = parseFeed(`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title><link>https://x</link><description>d</description>${items}</channel></rss>`);
+    expect(doc.items).toHaveLength(40);
+    expect(doc.items[0].title).toBe("Post 0 & more");
+  });
+});

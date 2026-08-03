@@ -42,7 +42,7 @@ async function kvGet(key: string): Promise<string | null> {
   const { execFileSync } = await import("node:child_process");
   try {
     const out = execFileSync(
-      "npx", ["wrangler", "kv", "key", "get", key, "--namespace-id", await kvNamespaceId(), "--remote"],
+      "npx", ["wrangler", "kv", "key", "get", key, "--namespace-id", await kvNamespaceId()],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
     return out.trim() || null;
@@ -56,7 +56,7 @@ async function kvGet(key: string): Promise<string | null> {
 async function kvPut(key: string, value: string): Promise<void> {
   const { execFileSync } = await import("node:child_process");
   execFileSync(
-    "npx", ["wrangler", "kv", "key", "put", key, value, "--namespace-id", await kvNamespaceId(), "--remote"],
+    "npx", ["wrangler", "kv", "key", "put", key, value, "--namespace-id", await kvNamespaceId()],
     { stdio: "inherit" },
   );
 }
