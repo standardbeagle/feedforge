@@ -29,14 +29,16 @@ export function renderLandingPage(host: string, feeds: LandingFeed[]): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>feedforge — open-source FeedBurner on Cloudflare Workers</title>
-<meta name="description" content="feedforge proxies your RSS, Atom, or RDF feed to a stable URL on Cloudflare's edge: normalization, Podcasting 2.0 support, subscriber analytics, and short-lived channels for agent/human coordination.">
+<meta name="description" content="feedforge proxies your RSS, Atom, or RDF feed to a stable URL on Cloudflare's edge: normalization, Podcasting 2.0, analytics, and agent channels.">
 <link rel="canonical" href="https://${esc(host)}/">
 <meta name="robots" content="index, follow">
 <meta property="og:type" content="website">
 <meta property="og:title" content="feedforge — open-source FeedBurner on Cloudflare Workers">
 <meta property="og:description" content="Stable feed URLs served from Cloudflare's edge. Feed proxying, Podcasting 2.0, analytics, and agent-coordination channels.">
 <meta property="og:url" content="https://${esc(host)}/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://${esc(host)}/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://${esc(host)}/og.png">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",

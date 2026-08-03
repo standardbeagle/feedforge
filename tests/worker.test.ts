@@ -147,3 +147,12 @@ describe("root landing page", () => {
     expect(html).not.toContain("<script>alert(1)</script>");
   });
 });
+
+describe("social card", () => {
+  it("serves /og.png as an image", async () => {
+    const res = await SELF.fetch("https://feeds.example.com/og.png");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toContain("immutable");
+  });
+});

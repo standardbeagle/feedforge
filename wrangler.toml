@@ -2,6 +2,8 @@ name = "feedforge"
 main = "src/worker.ts"
 compatibility_date = "2025-06-01"
 
+rules = [{ type = "Data", globs = ["**/*.png"] }]
+
 [triggers]
 crons = ["*/30 * * * *"]
 

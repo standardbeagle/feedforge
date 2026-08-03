@@ -6,10 +6,19 @@ import { classifyUa, recordRequest } from "./analytics";
 import { renderFeedPage, renderLandingPage } from "./view";
 import { handleApi } from "./api";
 import { getChannel, sweepExpired } from "./channels";
+import ogPng from "./assets/og.png";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/og.png") {
+      return new Response(ogPng, {
+        headers: {
+          "content-type": "image/png",
+          "cache-control": "public, max-age=86400, immutable",
+        },
+      });
+    }
     if (url.pathname.startsWith("/api/")) {
       return handleApi(request, env, url);
     }
