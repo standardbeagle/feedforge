@@ -4,17 +4,19 @@ compatibility_date = "2025-06-01"
 
 rules = [{ type = "Data", globs = ["**/*.png"] }]
 
+# Must stay above the first table header — inside [[kv_namespaces]] it parses as a
+# field of that namespace and the custom domains are silently never bound.
+routes = [
+  { pattern = "feeds.sbdev.io", custom_domain = true, zone_name = "sbdev.io" },
+  { pattern = "feeds.curvatureofthemind.com", custom_domain = true, zone_name = "curvatureofthemind.com" },
+]
+
 [triggers]
 crons = ["*/30 * * * *"]
 
 [[kv_namespaces]]
 binding = "FEEDS"
 id = "71db651c686a477cbec697b68b824965"
-
-routes = [
-  { pattern = "feeds.sbdev.io", custom_domain = true, zone_name = "sbdev.io" },
-  { pattern = "feeds.curvatureofthemind.com", custom_domain = true, zone_name = "curvatureofthemind.com" },
-]
 
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
