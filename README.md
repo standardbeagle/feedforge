@@ -13,6 +13,7 @@ publish short-lived feeds directly through a REST API, so a long-running task ca
 notify your feed reader when it finishes.
 
 - **Feed proxying** — parses RSS 2.0, Atom, and RDF; repairs malformed XML; emits valid RSS 2.0 or Atom (`?format=atom`)
+- **Conditional GET both ways** — feedforge sends `If-None-Match` to your origin *and* serves `ETag`/`Last-Modified` to readers, so an unchanged feed costs a subscriber a 304 instead of the whole body
 - **Podcasting 2.0** — enclosures, itunes fields, podcast namespace tags, and `content:encoded` survive normalization
 - **Analytics** — subscriber estimates and daily reach in Analytics Engine, with a privacy-preserving daily-rotating reader hash
 - **Short-lived channels** — capability-token REST API for agent/human coordination over RSS
@@ -44,6 +45,16 @@ Docs: **https://dev.standardbeagle.com/feedforge/**
   above every feed media type in `Accept` — i.e. browsers; the page then links
   the feed via `<link rel="alternate">` for autodiscovery.
 - `?format=rss`, `?format=atom`, and `?format=html` override negotiation entirely.
+- Cap how many items a feed carries: `npm run feeds -- max-items myblog 25`
+  (`none` to keep every item). Applied on the next poll.
+
+## Consistency notes
+
+- Channel items are stored one KV key each, so simultaneous publishers never
+  overwrite each other. KV is eventually consistent, so a just-published item may
+  not appear on the very next read.
+- A channel serves its newest 100 items. Older ones are not served and expire with
+  the channel; nothing sweeps them on a schedule.
 
 ## Refresh webhook
 
