@@ -67,7 +67,7 @@ describe("channel feed serving", () => {
     expect(res.status).toBe(404);
   });
 
-  it("sweeps expired channels on cron", async () => {
+  it("stops serving an expired channel without waiting for a sweep", async () => {
     const { env } = await import("cloudflare:test");
     const create = await SELF.fetch("https://feeds.example.com/api/channels", {
       method: "POST",
@@ -78,12 +78,12 @@ describe("channel feed serving", () => {
     const raw = await env.FEEDS.get(`channel:${ch.id}`);
     const expired = { ...JSON.parse(raw!), expires_at: new Date(Date.now() - 1000).toISOString() };
     await env.FEEDS.put(`channel:${ch.id}`, JSON.stringify(expired));
-    const { createScheduledController } = await import("cloudflare:test");
-    const worker = (await import("../src/worker")).default;
-    const ctrl = createScheduledController({ scheduledTime: Date.now(), cron: "*/30 * * * *" });
-    let pending: Promise<any> | undefined;
-    await worker.scheduled(ctrl as any, env, { waitUntil: (p: Promise<any>) => { pending = p; } } as any);
-    await pending;
-    expect(await env.FEEDS.get(`channel:${ch.id}`)).toBeNull();
+
+    // KV's own expiration is eventual, so the stored timestamp — not the sweep that
+    // used to run on cron — is what makes an expired channel stop serving.
+    const res = await SELF.fetch(`https://feeds.example.com/${ch.id}`, {
+      headers: { "user-agent": "FreshRSS/1.24" },
+    });
+    expect(res.status).toBe(404);
   });
 });

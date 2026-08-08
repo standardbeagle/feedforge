@@ -1,4 +1,4 @@
-import { createChannel, getChannel, appendItem, deleteChannel, verifyToken } from "./channels";
+import { createChannel, getChannelMeta, appendItem, deleteChannel, verifyToken } from "./channels";
 import { KVFeedStore } from "./registry";
 import { pollFeed } from "./poller";
 
@@ -14,8 +14,8 @@ function bearer(request: Request): string | null {
   return m ? m[1] : null;
 }
 
-async function authedChannel(env: Env, id: string, request: Request): Promise<Response | import("./channels").Channel> {
-  const channel = await getChannel(env.FEEDS, id);
+async function authedChannel(env: Env, id: string, request: Request): Promise<Response | import("./channels").ChannelMeta> {
+  const channel = await getChannelMeta(env.FEEDS, id);
   if (!channel) return json({ error: "channel not found" }, 404);
   const token = bearer(request);
   if (!token) return json({ error: "missing bearer token" }, 401);

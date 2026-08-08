@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import {
-  createChannel, getChannel, appendItem, deleteChannel, sweepExpired, verifyToken,
+  createChannel, getChannel, getChannelMeta, appendItem, deleteChannel, verifyToken, MAX_ITEMS,
 } from "../src/channels";
 
 describe("channels", () => {
@@ -36,22 +36,53 @@ describe("channels", () => {
 
   it("appends items with generated guid and pubDate", async () => {
     const { channel } = await createChannel(env.FEEDS, { title: "t" });
-    const updated = await appendItem(env.FEEDS, channel.id, { title: "Task done", link: "https://ci.example/build/1", description: "ok" });
-    expect(updated!.items).toHaveLength(1);
-    expect(updated!.items[0].title).toBe("Task done");
-    expect(updated!.items[0].guid).toMatch(/^[0-9a-f-]{36}$/);
-    expect(updated!.items[0].pubDate).toBeTruthy();
+    const item = await appendItem(env.FEEDS, channel.id, { title: "Task done", link: "https://ci.example/build/1", description: "ok" });
+    expect(item!.title).toBe("Task done");
+    expect(item!.guid).toMatch(/^[0-9a-f-]{36}$/);
+    expect(item!.pubDate).toBeTruthy();
+    const read = await getChannel(env.FEEDS, channel.id);
+    expect(read!.items).toHaveLength(1);
+    expect(read!.items[0].title).toBe("Task done");
   });
 
-  it("drops oldest items beyond the 100-item cap", async () => {
+  it("returns items oldest-to-newest regardless of write order", async () => {
     const { channel } = await createChannel(env.FEEDS, { title: "t" });
-    for (let i = 0; i < 105; i++) {
-      await appendItem(env.FEEDS, channel.id, { title: `item ${i}` });
+    for (const t of ["first", "second", "third"]) {
+      await appendItem(env.FEEDS, channel.id, { title: t });
     }
+    const read = await getChannel(env.FEEDS, channel.id);
+    expect(read!.items.map((i) => i.title)).toEqual(["first", "second", "third"]);
+  });
+
+  it("serves only MAX_ITEMS however many are published", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    // Appends are independent writes now, so the setup runs concurrently. Which
+    // items survive the cap is therefore unspecified — only the count is promised.
+    await Promise.all(
+      Array.from({ length: MAX_ITEMS + 5 }, (_, i) => appendItem(env.FEEDS, channel.id, { title: `item ${i}` })),
+    );
     const final = await getChannel(env.FEEDS, channel.id);
-    expect(final!.items).toHaveLength(100);
-    expect(final!.items[0].title).toBe("item 5");
-    expect(final!.items[99].title).toBe("item 104");
+    expect(final!.items).toHaveLength(MAX_ITEMS);
+    // 105 publishes is 210 KV round-trips against the local emulator. Production
+    // does one write per publish; this cost is the emulator, not the code path.
+  }, 30_000);
+
+  it("keeps concurrent publishes — no lost update", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) => appendItem(env.FEEDS, channel.id, { title: `concurrent ${i}` })),
+    );
+    const read = await getChannel(env.FEEDS, channel.id);
+    expect(read!.items).toHaveLength(10);
+    expect(new Set(read!.items.map((i) => i.title)).size).toBe(10);
+  });
+
+  it("refuses to append to an expired channel", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    const expired = { ...channel, items: undefined, expires_at: new Date(Date.now() - 1000).toISOString() };
+    await env.FEEDS.put(`channel:${channel.id}`, JSON.stringify(expired));
+    expect(await getChannelMeta(env.FEEDS, channel.id)).toBeNull();
+    expect(await appendItem(env.FEEDS, channel.id, { title: "late" })).toBeNull();
   });
 
   it("rejects items over 64KB", async () => {
@@ -67,15 +98,22 @@ describe("channels", () => {
     expect(await getChannel(env.FEEDS, channel.id)).toBeNull();
   });
 
-  it("sweepExpired removes only expired channels", async () => {
-    const fresh = await createChannel(env.FEEDS, { title: "fresh" });
-    const old = await createChannel(env.FEEDS, { title: "old" });
-    const stale = { ...old.channel, expires_at: new Date(Date.now() - 1000).toISOString() };
-    await env.FEEDS.put(`channel:${old.channel.id}`, JSON.stringify(stale));
-    const swept = await sweepExpired(env.FEEDS);
-    expect(swept).toContain(old.channel.id);
-    expect(swept).not.toContain(fresh.channel.id);
-    expect(await getChannel(env.FEEDS, old.channel.id)).toBeNull();
-    expect(await getChannel(env.FEEDS, fresh.channel.id)).not.toBeNull();
+  it("deleting a channel removes its items too", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t" });
+    await appendItem(env.FEEDS, channel.id, { title: "one" });
+    await deleteChannel(env.FEEDS, channel.id);
+    const leftovers = await env.FEEDS.list({ prefix: `citem:${channel.id}:` });
+    expect(leftovers.keys).toHaveLength(0);
+  });
+
+  it("gives every key an expiration so KV reclaims the channel without a sweep", async () => {
+    const { channel } = await createChannel(env.FEEDS, { title: "t", ttl_hours: 1 });
+    await appendItem(env.FEEDS, channel.id, { title: "one" });
+    const meta = await env.FEEDS.getWithMetadata(`channel:${channel.id}`);
+    expect(meta.value).not.toBeNull();
+    const items = await env.FEEDS.list({ prefix: `citem:${channel.id}:` });
+    expect(items.keys).toHaveLength(1);
+    // Both key classes carry an expiration; nothing relies on a cron to clean up.
+    expect(items.keys[0].expiration).toBeGreaterThan(Date.now() / 1000);
   });
 });
