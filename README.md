@@ -40,7 +40,10 @@ Docs: **https://dev.standardbeagle.com/feedforge/**
 ## Using feeds
 
 - Feed URL: `https://<your-worker-domain>/myblog` (Atom: append `?format=atom`)
-- Open the URL in a browser for a subscribe-friendly landing page.
+- The feed is the default. HTML is served only to clients that rank `text/html`
+  above every feed media type in `Accept` — i.e. browsers; the page then links
+  the feed via `<link rel="alternate">` for autodiscovery.
+- `?format=rss`, `?format=atom`, and `?format=html` override negotiation entirely.
 
 ## Refresh webhook
 

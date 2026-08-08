@@ -15,6 +15,16 @@ describe("renderFeedPage", () => {
     expect(html).toContain("<!doctype html>");
   });
 
+  it("advertises the feed for autodiscovery without the ?format= that produced the page", () => {
+    const html = renderFeedPage(doc, "https://feeds.example.com/blog?format=html", null);
+    expect(html).toContain(
+      '<link rel="alternate" type="application/rss+xml" title="Example Blog (RSS)" href="https://feeds.example.com/blog">',
+    );
+    expect(html).toContain('type="application/atom+xml"');
+    expect(html).toContain("https://feeds.example.com/blog?format=atom");
+    expect(html).not.toContain("format=html");
+  });
+
   it("escapes HTML in feed content", () => {
     const evil = { ...doc, title: `<script>alert(1)</script>` };
     const html = renderFeedPage(evil, "https://feeds.example.com/blog", null);

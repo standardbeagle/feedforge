@@ -2,7 +2,8 @@ import { KVFeedStore } from "./registry";
 import { pollAll, pollFeed } from "./poller";
 import { resolveFeedId } from "./router";
 import { parseFeed, buildAtom, buildRss, type FeedDoc } from "./normalize";
-import { classifyUa, recordRequest } from "./analytics";
+import { recordRequest } from "./analytics";
+import { chooseFormat } from "./negotiate";
 import { renderFeedPage, renderLandingPage } from "./view";
 import { handleApi } from "./api";
 import { getChannel, sweepExpired } from "./channels";
@@ -90,18 +91,15 @@ export default {
     const staleHeader: Record<string, string> = stale ? { "x-feed-stale": "true" } : {};
     const cacheHeader = { "cache-control": `public, max-age=${maxAge}` };
     const ua = request.headers.get("user-agent") ?? "";
+    const format = chooseFormat(url, request.headers.get("accept") ?? "", ua);
 
-    if (url.searchParams.get("format") === "atom") {
+    if (format === "atom") {
       return new Response(buildAtom(doc), {
         headers: { "content-type": "application/atom+xml; charset=utf-8", ...cacheHeader, ...staleHeader },
       });
     }
 
-    const wantsHtml =
-      (request.headers.get("accept") ?? "").includes("text/html") &&
-      classifyUa(ua).kind !== "aggregator";
-
-    if (wantsHtml) {
+    if (format === "html") {
       return new Response(renderFeedPage(doc, url.toString(), stale), {
         headers: { "content-type": "text/html; charset=utf-8", ...staleHeader },
       });

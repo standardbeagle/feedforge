@@ -95,6 +95,13 @@ export function renderFeedPage(doc: FeedDoc, feedUrl: string, stale: string | nu
     )
     .join("\n");
 
+  // The page is the HTML face of a feed URL; readers and browser extensions find
+  // the machine-readable copy through autodiscovery, so strip any ?format= first.
+  const canonical = new URL(feedUrl);
+  canonical.searchParams.delete("format");
+  const rssUrl = canonical.toString();
+  const atomUrl = `${rssUrl}${canonical.search ? "&" : "?"}format=atom`;
+
   const warning = stale
     ? `<p class="stale">This feed is stale — the origin could not be fetched (${esc(stale)}). Showing the last good copy.</p>`
     : "";
@@ -105,6 +112,8 @@ export function renderFeedPage(doc: FeedDoc, feedUrl: string, stale: string | nu
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(doc.title)} — feed</title>
+<link rel="alternate" type="application/rss+xml" title="${esc(doc.title)} (RSS)" href="${esc(rssUrl)}">
+<link rel="alternate" type="application/atom+xml" title="${esc(doc.title)} (Atom)" href="${esc(atomUrl)}">
 <style>
   body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
   .subscribe { background: #f4f4f4; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
@@ -119,7 +128,7 @@ export function renderFeedPage(doc: FeedDoc, feedUrl: string, stale: string | nu
 ${warning}
 <div class="subscribe">
   <p>This is an RSS feed. Subscribe by copying this URL into your feed reader:</p>
-  <code>${esc(feedUrl)}</code>
+  <code>${esc(rssUrl)}</code>
 </div>
 <h2>Recent items</h2>
 <ul>
