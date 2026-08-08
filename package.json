@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "deploy": "wrangler deploy",
+    "deploy": "devkey run cloudflare -- wrangler deploy",
     "dev": "wrangler dev",
     "feeds": "tsx src/cli.ts"
   },

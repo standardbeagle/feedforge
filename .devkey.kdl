@@ -1,0 +1,11 @@
+// Secrets this project needs. `devkey need` reads this and reports what is
+// missing plus the exact command to fix it. The values live in the machine's
+// system keyring, never here.
+//
+//   devkey need                              what is missing right now
+//   devkey run cloudflare -- npm run deploy  deploy with the token in env
+//
+// REFRESH_TOKEN is deliberately absent: it is a Worker secret set once with
+// `wrangler secret put REFRESH_TOKEN` and stored by Cloudflare, so no local
+// deploy needs it in the environment.
+needs "cloudflare"
