@@ -22,6 +22,19 @@ export function mapDomain(reg: Registry, hostname: string, id: string): Registry
   return { ...reg, domains: { ...reg.domains, [hostname]: id } };
 }
 
+export function setMaxItems(reg: Registry, id: string, max: number | null): Registry {
+  if (!reg.feeds.some((f) => f.id === id)) throw new Error(`no feed with id '${id}'`);
+  if (max !== null && (!Number.isInteger(max) || max < 1)) {
+    throw new Error("max-items must be a positive integer, or 'none' to keep every item");
+  }
+  return {
+    ...reg,
+    feeds: reg.feeds.map((f) =>
+      f.id === id ? { ...f, ...(max === null ? { max_items: undefined } : { max_items: max }) } : f,
+    ),
+  };
+}
+
 export function isNotFoundError(msg: string): boolean {
   return /not (found|exist)|does not exist|10007/i.test(msg);
 }
@@ -115,8 +128,20 @@ async function main(argv: string[]): Promise<void> {
       console.log(`[[routes]]\ncustom_domain = "${hostname}"`);
       break;
     }
+    case "max-items": {
+      const [id, value] = args;
+      if (!id || !value) throw new Error("usage: feeds max-items <name> <count|none>");
+      const max = value === "none" ? null : Number(value);
+      await kvPut("feeds.json", JSON.stringify(setMaxItems(reg, id, max)));
+      console.log(
+        max === null
+          ? `'${id}' will keep every item from its origin`
+          : `'${id}' will keep the newest ${max} items, applied on the next poll`,
+      );
+      break;
+    }
     default:
-      console.log("usage: feeds <add|remove|list|map-domain> ...");
+      console.log("usage: feeds <add|remove|list|max-items|map-domain> ...");
       process.exit(cmd ? 1 : 0);
   }
 }
