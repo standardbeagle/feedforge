@@ -1,6 +1,9 @@
 name = "feedforge"
 main = "src/worker.ts"
 compatibility_date = "2025-06-01"
+# The OAuth login sees two accounts; the FEEDS namespace and both route zones
+# live in this one, so pin it rather than let a deploy pick.
+account_id = "7890ae4b9428f680f6c8e9f106d473d8"
 
 rules = [{ type = "Data", globs = ["**/*.png"] }]
 
