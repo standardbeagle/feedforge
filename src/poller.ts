@@ -1,4 +1,5 @@
 import { parseFeed, buildRss, FeedParseError } from "./normalize";
+import { sha256hex } from "./conditional";
 import type { FeedEntry, FeedStore, StoredFeed } from "./registry";
 
 export interface PollResult {
@@ -63,15 +64,28 @@ export async function pollFeed(
   const len = Number(res.headers.get("content-length") ?? 0);
   if (len > MAX_FEED_BYTES) return fail(`origin body too large (${len} bytes)`);
   const body = await res.text();
-  if (body.length > MAX_FEED_BYTES) return fail("origin body too large");
+  // String length counts UTF-16 units, not bytes, so a multibyte-heavy feed would
+  // slip past a length check; content-length is also absent on chunked responses.
+  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  if (bodyBytes > MAX_FEED_BYTES) return fail(`origin body too large (${bodyBytes} bytes)`);
   try {
     const doc = parseFeed(body);
+    if (entry.max_items !== undefined && doc.items.length > entry.max_items) {
+      doc.items = doc.items.slice(0, entry.max_items);
+    }
+    const xml = buildRss(doc);
+    const xmlHash = await sha256hex(xml);
+    const now = new Date().toISOString();
     const stored: StoredFeed = {
-      xml: buildRss(doc),
+      xml,
       meta: {
         etag: res.headers.get("etag") ?? undefined,
         last_modified: res.headers.get("last-modified") ?? undefined,
-        last_fetched: new Date().toISOString(),
+        last_fetched: now,
+        xml_hash: xmlHash,
+        // A poll that re-fetches identical content must not move Last-Modified,
+        // or every subscriber's cached copy is invalidated for nothing.
+        last_built: existing?.meta.xml_hash === xmlHash ? (existing.meta.last_built ?? now) : now,
         title: doc.title,
         item_count: doc.items.length,
         error_count: 0,

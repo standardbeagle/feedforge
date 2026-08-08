@@ -3,6 +3,8 @@ export interface FeedEntry {
   origin: string;
   poll_minutes: number;
   created_at: string;
+  /** Keep only the newest N items when rebuilding. Unset means keep every item. */
+  max_items?: number;
 }
 
 export interface Registry {
@@ -11,9 +13,14 @@ export interface Registry {
 }
 
 export interface FeedMeta {
+  /** Origin's validators, replayed upstream on the next poll. */
   etag?: string;
   last_modified?: string;
   last_fetched: string;
+  /** Hash of `xml`, so a request can be answered with a validator without rehashing the body. */
+  xml_hash?: string;
+  /** When `xml` last actually changed — the Last-Modified we hand subscribers. */
+  last_built?: string;
   title: string;
   item_count: number;
   error_count: number;

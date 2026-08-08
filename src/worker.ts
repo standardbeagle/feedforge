@@ -3,11 +3,18 @@ import { pollAll, pollFeed } from "./poller";
 import { resolveFeedId } from "./router";
 import { parseFeed, buildAtom, buildRss, type FeedDoc } from "./normalize";
 import { recordRequest } from "./analytics";
-import { chooseFormat } from "./negotiate";
 import { renderFeedPage, renderLandingPage } from "./view";
 import { handleApi } from "./api";
-import { getChannel, sweepExpired } from "./channels";
+import { getChannel } from "./channels";
+import { chooseFormat, type Format } from "./negotiate";
+import { etagFor, isNotModified, sha256hex } from "./conditional";
 import ogPng from "./assets/og.png";
+
+const CONTENT_TYPES: Record<Format, string> = {
+  rss: "application/rss+xml; charset=utf-8",
+  atom: "application/atom+xml; charset=utf-8",
+  html: "text/html; charset=utf-8",
+};
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -23,99 +30,111 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       return handleApi(request, env, url);
     }
+
     const store = new KVFeedStore(env.FEEDS);
     const feedId = await resolveFeedId(url, store);
     const entry = feedId ? (await store.getRegistry()).feeds.find((f) => f.id === feedId) : undefined;
     const maxAge = entry ? entry.poll_minutes * 60 : 60;
+    const format = chooseFormat(url, request.headers.get("accept") ?? "", request.headers.get("user-agent") ?? "");
 
-    let doc: FeedDoc;
     let storedXml: string | null = null;
+    let xmlHash: string | null = null;
+    let lastBuilt: string | null = null;
     let stale: string | null = null;
+    // Parsing a large feed costs more than everything else on this path combined,
+    // and the RSS response never needs it — so it stays behind a thunk.
+    let parsed: FeedDoc | null = null;
+    let docSource: (() => FeedDoc) | null = null;
+    const doc = (): FeedDoc => (parsed ??= docSource!());
 
     const stored = feedId ? await store.getFeed(feedId) : null;
     if (stored) {
-      doc = parseFeed(stored.xml);
       storedXml = stored.xml;
+      xmlHash = stored.meta.xml_hash ?? null;
+      lastBuilt = stored.meta.last_built ?? null;
+      docSource = () => parseFeed(stored.xml);
       stale = stored.meta.error_count > 0 ? (stored.meta.last_error ?? "stale") : null;
-    } else {
-      if (feedId && entry) {
-        const result = await pollFeed(entry, store);
-        if (result.status === "error") {
-          const after = await store.getFeed(feedId);
-          if (!after) return new Response(`Feed unavailable: ${result.message}`, { status: 502 });
-          doc = parseFeed(after.xml);
-          storedXml = after.xml;
-        } else {
-          const feed = result.feed ?? (await store.getFeed(feedId));
-          if (!feed) return new Response("Feed temporarily unavailable", { status: 503 });
-          doc = parseFeed(feed.xml);
-          storedXml = feed.xml;
-        }
-      } else {
-        const channelId = feedId ?? url.pathname.split("/").filter(Boolean)[0] ?? null;
-        if (!channelId) {
-          if (request.method === "GET") {
-            const reg = await store.getRegistry();
-            const feeds = await Promise.all(
-              reg.feeds.map(async (f) => ({
-                id: f.id,
-                title: (await store.getFeed(f.id))?.meta.title ?? f.id,
-              })),
-            );
-            return new Response(renderLandingPage(url.host, feeds), {
-              headers: { "content-type": "text/html; charset=utf-8" },
-            });
-          }
-          return new Response("Not found", { status: 404 });
-        }
-        const channel = await getChannel(env.FEEDS, channelId);
-        if (!channel) return new Response("Feed not found", { status: 404 });
-        doc = {
-          title: channel.title,
-          link: `${url.origin}/${channel.id}`,
-          description: channel.description,
-          items: channel.items.map((i) => ({
-            title: i.title,
-            link: i.link ?? `${url.origin}/${channel.id}`,
-            guid: i.guid,
-            pubDate: i.pubDate,
-            description: i.description,
-          })),
-        };
+    } else if (feedId && entry) {
+      const result = await pollFeed(entry, store);
+      const feed = result.feed ?? (await store.getFeed(feedId));
+      if (!feed) {
+        return result.status === "error"
+          ? new Response(`Feed unavailable: ${result.message}`, { status: 502 })
+          : new Response("Feed temporarily unavailable", { status: 503 });
       }
+      storedXml = feed.xml;
+      xmlHash = feed.meta.xml_hash ?? null;
+      lastBuilt = feed.meta.last_built ?? null;
+      docSource = () => parseFeed(feed.xml);
+    } else {
+      const channelId = feedId ?? url.pathname.split("/").filter(Boolean)[0] ?? null;
+      if (!channelId) {
+        if (request.method === "GET") {
+          const reg = await store.getRegistry();
+          const feeds = await Promise.all(
+            reg.feeds.map(async (f) => ({
+              id: f.id,
+              title: (await store.getFeed(f.id))?.meta.title ?? f.id,
+            })),
+          );
+          return new Response(renderLandingPage(url.host, feeds), {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }
+      const channel = await getChannel(env.FEEDS, channelId);
+      if (!channel) return new Response("Feed not found", { status: 404 });
+      lastBuilt = channel.items.at(-1)?.pubDate ?? channel.created_at;
+      const built: FeedDoc = {
+        title: channel.title,
+        link: `${url.origin}/${channel.id}`,
+        description: channel.description,
+        items: channel.items.map((i) => ({
+          title: i.title,
+          link: i.link ?? `${url.origin}/${channel.id}`,
+          guid: i.guid,
+          pubDate: i.pubDate,
+          description: i.description,
+        })),
+      };
+      docSource = () => built;
     }
 
-    const recordId = feedId ?? doc.link.split("/").pop()!;
+    const recordId = feedId ?? doc().link.split("/").pop()!;
     ctx.waitUntil(recordRequest(env, recordId, request));
 
-    const staleHeader: Record<string, string> = stale ? { "x-feed-stale": "true" } : {};
-    const cacheHeader = { "cache-control": `public, max-age=${maxAge}` };
-    const ua = request.headers.get("user-agent") ?? "";
-    const format = chooseFormat(url, request.headers.get("accept") ?? "", ua);
+    let body: string;
+    if (format === "atom") body = buildAtom(doc());
+    else if (format === "html") body = renderFeedPage(doc(), url.toString(), stale);
+    else body = storedXml ?? buildRss(doc());
 
-    if (format === "atom") {
-      return new Response(buildAtom(doc), {
-        headers: { "content-type": "application/atom+xml; charset=utf-8", ...cacheHeader, ...staleHeader },
-      });
-    }
+    // Hashing the stored body would undo the point of skipping the parse, so the
+    // poller's precomputed hash is used whenever the bytes came straight from KV.
+    const contentHash = format === "rss" && storedXml !== null && xmlHash ? xmlHash : await sha256hex(body);
+    const etag = etagFor(contentHash, format);
 
-    if (format === "html") {
-      return new Response(renderFeedPage(doc, url.toString(), stale), {
-        headers: { "content-type": "text/html; charset=utf-8", ...staleHeader },
-      });
-    }
-
-    return new Response(storedXml ?? buildRss(doc), {
-      headers: { "content-type": "application/rss+xml; charset=utf-8", ...cacheHeader, ...staleHeader },
+    const headers = new Headers({
+      "content-type": CONTENT_TYPES[format],
+      etag,
+      "cache-control": `public, max-age=${maxAge}`,
     });
+    if (lastBuilt) {
+      const built = new Date(lastBuilt);
+      if (!Number.isNaN(built.getTime())) headers.set("last-modified", built.toUTCString());
+    }
+    if (stale) headers.set("x-feed-stale", "true");
+
+    // A validator match means the reader already has these exact bytes; the body is
+    // where essentially all of a feed's bandwidth goes, so this is the whole point.
+    if (isNotModified(request, etag, headers.get("last-modified"))) {
+      return new Response(null, { status: 304, headers });
+    }
+    return new Response(body, { headers });
   },
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(
-      (async () => {
-        await pollAll(new KVFeedStore(env.FEEDS));
-        await sweepExpired(env.FEEDS);
-      })(),
-    );
+    // Channel keys carry an expirationTtl, so KV reclaims them without a sweep.
+    ctx.waitUntil(pollAll(new KVFeedStore(env.FEEDS)));
   },
 };
