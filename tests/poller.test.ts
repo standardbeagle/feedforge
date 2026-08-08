@@ -108,6 +108,46 @@ describe("pollFeed", () => {
     expect(result.status).toBe("error");
     expect(result.message).toContain("too large");
   });
+
+  it("measures the cap in bytes, not UTF-16 units", async () => {
+    const store = new KVFeedStore(env.FEEDS);
+    // 3 UTF-8 bytes per char: 1.8M chars is 5.4MB of body but only 1.8M string
+    // units, so a length-based check waves it through. No content-length header,
+    // as on a chunked response, so line-64's early check cannot catch it either.
+    const multibyte = "あ".repeat(1_800_000);
+    expect(multibyte.length).toBeLessThan(5 * 1024 * 1024);
+    const result = await pollFeed({ ...entry, id: "mb" }, store, fetcher(resp(multibyte)));
+    expect(result.status).toBe("error");
+    expect(result.message).toContain("too large");
+  }, 20_000);
+
+  it("records a content hash and holds Last-Modified steady across identical polls", async () => {
+    const store = new KVFeedStore(env.FEEDS);
+    const e: FeedEntry = { ...entry, id: "hash", poll_minutes: 0 };
+    const first = await pollFeed(e, store, fetcher(resp(rss)));
+    expect(first.feed!.meta.xml_hash).toMatch(/^[0-9a-f]{64}$/);
+    const builtAt = first.feed!.meta.last_built;
+    expect(builtAt).toBeTruthy();
+
+    const second = await pollFeed(e, store, fetcher(resp(rss)));
+    expect(second.feed!.meta.xml_hash).toBe(first.feed!.meta.xml_hash);
+    // Same bytes, so subscribers' cached copies must not be invalidated.
+    expect(second.feed!.meta.last_built).toBe(builtAt);
+    expect(second.feed!.meta.last_fetched).not.toBe(first.feed!.meta.last_fetched);
+  });
+
+  it("keeps only max_items when the feed sets one", async () => {
+    const store = new KVFeedStore(env.FEEDS);
+    const many = rss.replace(
+      "</channel>",
+      Array.from({ length: 5 }, (_, i) => `<item><title>extra ${i}</title><link>https://e.test/${i}</link></item>`).join("") + "</channel>",
+    );
+    const capped = await pollFeed({ ...entry, id: "cap", max_items: 2 }, store, fetcher(resp(many)));
+    expect(capped.feed!.meta.item_count).toBe(2);
+
+    const uncapped = await pollFeed({ ...entry, id: "nocap" }, store, fetcher(resp(many)));
+    expect(uncapped.feed!.meta.item_count).toBe(6);
+  });
 });
 
 describe("pollAll", () => {
