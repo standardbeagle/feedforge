@@ -8,6 +8,16 @@ export default defineConfig({
   integrations: [
     sitemap(),
     starlight({
+      head: [
+        {
+          tag: 'script',
+          attrs: {
+            type: 'module',
+            src: 'https://static.cloudflareinsights.com/beacon.min.js',
+            'data-cf-beacon': '{"token": "e77d64f1f6f24ed9b18d06d0320e7d1a"}',
+          },
+        },
+      ],
       title: "feedforge",
       description:
         "Open-source FeedBurner replacement on Cloudflare Workers: feed proxying, analytics, Podcasting 2.0, and agent-coordination channels.",
