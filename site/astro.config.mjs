@@ -1,6 +1,6 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
-import sitemap from "@astrojs/sitemap";
+import sitemap from "./sitemap.mjs";
 
 export default defineConfig({
   site: "https://dev.standardbeagle.com",
@@ -8,6 +8,7 @@ export default defineConfig({
   integrations: [
     sitemap(),
     starlight({
+      routeMiddleware: "./src/routeData.ts",
       head: [
         {
           tag: 'script',
